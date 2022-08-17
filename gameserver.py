@@ -113,7 +113,7 @@ ERROR_POST_DATA_FORMAT = "4/*".encode('utf-8')
 ERROR_NOT_REGISTERED = "5/*".encode('utf-8')
 ERROR_BAD_REGISTER_SYMBOL = "6/*".encode('utf-8')
 ERROR_REGISTER_FAIL = "7/*".encode('utf-8')
-ERROR_pairing_keep_alive_FAIL = "8/*".encode('utf-8')
+ERROR_KEEP_ALIVE_FAIL = "8/*".encode('utf-8')
 ERROR_PARTNER_DROP = "9/2".encode('utf-8')
 ERROR_DROPPED_BY_SERVER = "10/*".encode('utf-8')
 ERROR_PAIRING_KEYS_MAXED = "11/*".encode('utf-8')
@@ -255,7 +255,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     restarted_timer = pairing_keep_alive(self.key)
                     if not restarted_timer:
                         pairing_purge_entry(self.key)
-                        return False, ERROR_pairing_keep_alive_FAIL
+                        return False, ERROR_KEEP_ALIVE_FAIL
                     for partner_key in range(0, pairing_key_assign_ctr[0]):
                         partner = pairing_registry[partner_key]
                         if partner_key != self.key \
@@ -275,7 +275,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     restarted_timer = pairing_keep_alive(self.key)
                     if not restarted_timer:
                         pairing_purge_entry(self.key)
-                        return False, ERROR_pairing_keep_alive_FAIL
+                        return False, ERROR_KEEP_ALIVE_FAIL
                     if pairing_registry[player.partner_key] is None:
                         self.partner_drop_reset(player)
                         return False, ERROR_PARTNER_DROP
@@ -287,7 +287,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 restarted_timer = pairing_keep_alive(self.key, map_load_timeout)
                 if not restarted_timer:
                     pairing_purge_entry(self.key)
-                    return False, ERROR_pairing_keep_alive_FAIL
+                    return False, ERROR_KEEP_ALIVE_FAIL
                 player.server_status = STATUS_LOADING
                 if pairing_registry[player.partner_key] is None:
                     self.partner_drop_reset(player)
@@ -300,7 +300,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 restarted_timer = pairing_keep_alive(self.key, map_load_timeout)
                 if not restarted_timer:
                     pairing_purge_entry(self.key)
-                    return False, ERROR_pairing_keep_alive_FAIL
+                    return False, ERROR_KEEP_ALIVE_FAIL
                 partner = pairing_registry[player.partner_key]
                 if partner is None:
                     self.partner_drop_reset(player)
