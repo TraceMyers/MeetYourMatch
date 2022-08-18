@@ -2,7 +2,7 @@
 
 <p>A simple HTTP TURN server used to demo my game's 2 player multiplayer. Can handle an undetermined number of clients, but the maximum number of pairing players, as well as the maximum number of games, is defaulted to 100.</p>
 
-<p>Game clients connect to this server and the server handles matchmaking on a first-come-first-serve basis. Once clients are paired, this server relays data between the clients. This will not easily work with game engine net code since it's meant for simple text transfer. My game transfers very little data and doesn't require speedy, frequent communication.</p>
+<p>Game clients connect to this server and the server handles matchmaking on a first-come-first-serve basis. Once clients are paired, this server relays data between the clients. This will not easily work with game engine net code since it's meant for simple text transfer. A game like mine which transfers very little data and doesn't require speedy, frequent communication will be a good fit.</p>
 <p>How to use:</p>
 <ul>
   <li><p>Clients send http POST requests to the server's public IP + whatever port is specified at startup (or default port is 80). The requests are simple text formatted like so:<blockquote>[incoming symbol],[formatted data],[game/pairing key],[player key],[game received switch]</blockquote></p>
