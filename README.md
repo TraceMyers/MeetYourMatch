@@ -9,7 +9,7 @@
     <ul>
       <li>[incoming symbol]: Tells the server what the client wants, and what kind of formatted data to expect. All of these symbols can be found under the comment reading "incoming symbols"</li>
        <li>[formatted data]: Game data related to the incoming symbol, or nothing. If the incoming symbol is NOTIFY_REGISTER, the data will be a user name. If the incoming symbol is NOTIFY_GAME_UPDATE, the data will be game data. Otherwise, this field is unused.</li>
-      <li>[game/pairing key]: If the incoming symbol is NOTIFY_REGISTER(=0), the valid keys are '*' and 'bibbybabbis', which respectively give a normal and a long amount of time to wait between requests. '*' is hard-coded, so the latter is for debug purposes. For any other incoming symbol, the key represents the unique pairing registry ID *or* game_registry ID supplied by the server.</li>
+      <li>[game/pairing key]: If the incoming symbol is NOTIFY_REGISTER(=0), the valid keys are '*' and 'bibbybabbis', which respectively give a normal and a long amount of time to wait between requests before being dropped. '*' is hard-coded, so the latter is for debug purposes. For any other incoming symbol, the key represents the unique pairing registry ID *or* game_registry ID supplied by the server.</li>
       <li>[player key]: Used only once in-match. Each player either sends a 0 or 1, uniquely. Used for list access in the Game object.</li>
       <li>[game recieved switch]: 0 or 1. Used to synchronize data between clients and the server in case of packet loss. The client keeps a boolean variable, initialized to 0. Every time a client recieves data from the other client (through this server), the boolean should flip.</li>
     </ul>
