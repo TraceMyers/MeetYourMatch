@@ -2,7 +2,7 @@
 
 <p>A simple HTTP TURN server used to demo my game's 2 player multiplayer. Can handle an undetermined number of clients, but the maximum number of pairing players, as well as the maximum number of games, is defaulted to 100.</p>
 
-<p>Game clients connect to this server and the server handles matchmaking on a first-come-first-serve basis. Once clients are paired, this server relays data between the clients. This will not easily work with game engine net code since it's meant for simple text transfer. A game like mine which transfers very little data and doesn't require speedy, frequent communication will be a good fit.</p>
+<p>Game clients connect to this server and the server handles matchmaking on a first-come-first-serve basis, or between two specific clients. Once clients are paired, this server relays data between the clients. This will not easily work with game engine net code since it's meant for simple text transfer. A game like mine which transfers very little data and doesn't require speedy, frequent communication will be a good fit.</p>
 <p>How to use:</p>
 <ul>
   <li><p>Clients send http POST requests to the server's public IP + whatever port is specified at startup (or default port is 80). The requests are simple text formatted like so:<blockquote>[incoming symbol],[formatted data],[game/pairing key],[player key],[game received switch]</blockquote></p>
@@ -10,8 +10,8 @@
       <li>[incoming symbol]: Tells the server what the client wants, and what kind of formatted data to expect. All of these symbols can be found under the comment reading "incoming symbols"</li>
        <li>[formatted data]: Game data related to the incoming symbol, or nothing. If the incoming symbol is NOTIFY_REGISTER, the data will be a user name. If the incoming symbol is NOTIFY_GAME_UPDATE, the data will be game data. Otherwise, this field is unused.</li>
       <li>[game/pairing key]: If the incoming symbol is NOTIFY_REGISTER(=0), the valid keys are '*' and 'bibbybabbis', which respectively give a normal and a long amount of time to wait between requests before being dropped. '*' is hard-coded, so the latter is for debug purposes. For any other incoming symbol, the key represents the unique pairing registry ID *or* game_registry ID supplied by the server.</li>
-      <li>[player key]: Used only once the online match has started. Each player either sends a 0 or 1, uniquely. Used for list access in the Game object.</li>
-      <li>[game recieved switch]: 0 or 1. Used to synchronize data between clients and the server in case of packet loss. The client keeps a boolean variable, initialized to 0. Every time a client recieves data from the other client (through this server), the boolean should flip.</li>
+      <li>[player key]: During registration, this field indicates who (what name) the client wants to be paired with - and nobody else. '*' for random pairing. After that, the field is unused until the online match has started. Each player either sends a 0 or 1, uniquely. Used for list access in the Game object.</li>
+      <li>[player state counter]: Once the match starts, the first value for player state counter should be 0. Each time the player recieves a message back, they increment this counter. If the player's counter stays fixed for every update, the server will continue saving partner data and sending it in larger and larger blocks. Once the counter increases the server will release old data. If the state counter is behind or too ahead, the server will send an error.</li>
     </ul>
     <p>Example 1: <blockquote>0,Davey Jones,*,*,*</blockquote> being sent to the server says "Register me as Davey Jones. I need a key."</p>
     <p>Example 2: <blockquote>2,*,30,*,*</blockquote> says "I want to be paired with another player. The registry key handed to me by the server is 30."</p>
