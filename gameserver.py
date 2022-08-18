@@ -1,10 +1,10 @@
 """
-An HTTP TURN server for demo-ing my game's 2p multiplayer.
+A Simple HTTP TURN server for demo-ing my game's 2p multiplayer.
 
-The game uses Unreal engine 4.27. Players connect to this server and the server handles matchmaking
-on a first-come-first-serve basis. Once players are paired, this server relays data between the
-players. One player runs server + client and the other runs client only. Data is then 
-hand-replicated and verified in the game, since data are sent without Unreal net code.
+Players connect to this server and the server handles matchmaking on a first-come-first-serve basis. 
+Once players are paired, this server relays data between the players. One player runs server + 
+client and the other runs client only. Data is then hand-replicated and verified in the game, 
+since data are sent with text.
 """
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
