@@ -1,6 +1,6 @@
 # MobileWordGameTurnServer
 
-<p>A simple HTTP TURN server used to demo my game's 2 player multiplayer.</p>
+<p>A simple HTTP TURN server used to demo my game's 2 player multiplayer. Can handle an undetermined number of clients, but the maximum number of pairing players, as well as the maximum number of games, is defaulted to 100.</p>
 
 <p>Game clients connect to this server and the server handles matchmaking on a first-come-first-serve basis. Once players are paired, this server relays data between the
 players. One player runs server + client and the other runs client only. Data must be then manually validated and replicated, since it will be in a custom format</p>
