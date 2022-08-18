@@ -152,6 +152,11 @@ class Player:
         return "none"
 
 
+#---------------------------------------------------------------------------------------------------
+#----------------------------------------------------------------------------------------:class game
+#---------------------------------------------------------------------------------------------------
+
+
 class Game:
 
     def __init__(self, args):
@@ -179,7 +184,7 @@ class Game:
 
 
 #---------------------------------------------------------------------------------------------------
-#-----------------------------------------------------------------------------:class request handler
+#-------------------------------------------------------------------------:class game notify handler
 #---------------------------------------------------------------------------------------------------
 
 
@@ -245,7 +250,6 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                 if pair_working:
                     self._set_response(200)
                         
-        decoded_msg = 
         log(f"{dt}\n{return_msg}\n{post_data}\n{ip_address}")
 
         if record_to == TABLE_GAME and game_working:
@@ -483,7 +487,6 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             return f'{C_MSG_GAME_DATA}{combined_data}\n'
         else:
             return f'{ERROR_GAME_CACHE_MAXED}{old_data}\n'
-
 
 
     def _set_response(self, val):
