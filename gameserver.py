@@ -224,7 +224,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             self.wfile.write(ERROR_NO_CLIENT_ADDRESS)
             return;
 
-        http_response = 400
+        http_code = 400
         record_to = TABLE_NONE
         parse_validate_success, return_msg = self.parse_and_validate(post_data, ip_address)
 
@@ -235,7 +235,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                 table_entry = game_msg_table[self.key][self.player_key]
                 if self.player_state == table_entry[0]:
                     return_msg = self.game_redundant_msg_update(table_entry)
-                    http_response = table_entry[2]
+                    http_code = table_entry[2]
                 elif self.player_state > table_entry[0] + 1:
                     return_msg = ERROR_PLAYER_STATE_AHEAD
                 elif self.player_state < table_entry[0]:
@@ -244,7 +244,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                     game_working, return_msg = self.game_update()
                     if game_working:
                         record_to = TABLE_GAME
-                        http_response = 200
+                        http_code = 200
             else:
                 pair_working, return_msg = self.pair_player()
                 if pair_working:
@@ -254,10 +254,13 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             table_entry = game_msg_table[self.key][self.player_key]
             table_entry[0] += 1
             table_entry[1] = return_msg
-            table_entry[2] = http_response
+            table_entry[2] = http_code
 
         self.wfile.write(return_msg.encode('utf-8'))
-        self._set_response(http_response)
+        self._set_response(http_code)
+        # self.log_request(http_code)
+        # self.send_response_only(http_code)
+        # self.end_headers()
         log(f"{dt}\n{return_msg}\n{post_data}\n{ip_address}")
 
 
@@ -489,6 +492,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
 
 
     def _set_response(self, val):
+        pass
         self.send_response(val)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
