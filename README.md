@@ -1,6 +1,6 @@
 # Mobile Word Game Turn Server
 
-<p>A simple HTTP TURN server used to demo my game's 2 player multiplayer. Can handle an undetermined number of clients, but the maximum number of pairing players, as well as the maximum number of games, is defaulted to 100.</p>
+<p>A simple HTTP TURN server used to demo my game's 2 player multiplayer. Can handle an undetermined number of clients, but the maximum number of pairing players, as well as the maximum number of games, is defaulted to 100 each, giving a maximum total of 300 players tracked in the system. Testing is needed to verify how much it can handle.</p>
 
 <p>Game clients connect to this server and the server handles matchmaking on a first-come-first-serve basis, or between two specific clients. Once clients are paired, this server relays data between the clients. This will not easily work with game engine net code since it's meant for simple text transfer. A game like mine which transfers very little data and doesn't require speedy, frequent communication will be a good fit.</p>
 <p>How to use:</p>
