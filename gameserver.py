@@ -178,7 +178,7 @@ class Game:
             f' / updated={p0_updated}\n'
             f'data="{self.data[0]}"\n'
             f'P1: {p1.name} / {p1.address} / {p1._role()} / state={self.player_state[1]}'
-            f' / updated={p0_updated}\n'
+            f' / updated={p1_updated}\n'
             f'data="{self.data[1]}"'
         )
 
@@ -249,8 +249,6 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                 pair_working, return_msg = self.pair_player()
                 if pair_working:
                     self._set_response(200)
-                        
-        log(f"{dt}\n{return_msg}\n{post_data}\n{ip_address}")
 
         if record_to == TABLE_GAME and game_working:
             table_entry = game_msg_table[self.key][self.player_key]
@@ -260,6 +258,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
 
         self.wfile.write(return_msg.encode('utf-8'))
         self._set_response(http_response)
+        log(f"{dt}\n{return_msg}\n{post_data}\n{ip_address}")
 
 
     def parse_and_validate(self, post_data, ip_address):
