@@ -5,43 +5,6 @@ The game uses Unreal engine 4.27. Players connect to this server and the server 
 on a first-come-first-serve basis. Once players are paired, this server relays data between the
 players. One player runs server + client and the other runs client only. Data is then 
 hand-replicated and verified in the game, since data are sent without Unreal net code.
-
-(1) Pairing Process:
-
-Clients send http POST requests to the server's public IP + whatever port is specified at startup 
-(or default port is 80). The requests are simple text formatted like so:
-
-"[incoming symbol],[formatted data],[key]"
-
--- [incoming symbol]: Tells the server what the client wants, and what kind of formatted data to 
-expect. All of these symbols can be found under the comment below reading "incoming symbols"
-
--- [formatted data]: Game data related to the incoming symbol, or nothing. If the incoming symbol is 
-NOTIFY_REGISTER, the data will be a user name. If the incoming symbol is 
-NOTIFY_GAME_UPDATE, the data will be game data. Otherwise, this field is unused.
-
--- [key]: If the incoming symbol is NOTIFY_REGISTER, the valid keys are '*' and 'bibbybabbis', which
-respectively give a normal and a long amount of time to wait between requests. '*' is hard-coded,
-so the latter is for debug purposes. For any other incoming symbol, the key represents the unique
-pairing registry ID *or* game_registry ID supplied by the server.
-
-examples:
-
-0,Davey Jones,*,*,*
-... or
-2,*,30,*,*
-... or etc.
-
-Players send these requests at a fixed interval in order to keep their registration alive.
-
-Players are first registered and then they request to be paired. Once players are paired 
-first-come-first-serve, they are moved from the pairing registry to the game registry.
-
-# 4,K1/X2003.5/Y19.22,19,1
-# ... or etc.
-
-command line arguments are detailed above __main__
-
 """
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
