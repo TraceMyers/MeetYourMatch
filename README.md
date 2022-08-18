@@ -6,7 +6,7 @@
 players. One player runs server + client and the other runs client only. Data must be then manually validated and replicated, since it will be in a custom format</p>
 <p>How to use:</p>
 <ul>
-  <li><p>Clients send http POST requests to the server's public IP + whatever port is specified at startup (or default port is 80). The requests are simple text formatted like so:<blockquote>"[incoming symbol],[formatted data],[game/pairing key],[player key],[game received switch]"</blockquote>.</p>
+  <li><p>Clients send http POST requests to the server's public IP + whatever port is specified at startup (or default port is 80). The requests are simple text formatted like so:<blockquote>[incoming symbol],[formatted data],[game/pairing key],[player key],[game received switch]</blockquote>.</p>
     <ul>
       <li>[incoming symbol]: Tells the server what the client wants, and what kind of formatted data to expect. All of these symbols can be found under the comment reading "incoming symbols"</li>
        <li>[formatted data]: Game data related to the incoming symbol, or nothing. If the incoming symbol is NOTIFY_REGISTER, the data will be a user name. If the incoming symbol is NOTIFY_GAME_UPDATE, the data will be game data. Otherwise, this field is unused.</li>
@@ -17,7 +17,7 @@ players. One player runs server + client and the other runs client only. Data mu
     <p>Example 1: "0,Davey Jones,*,*,*" being sent to the server says "Register me as Davey Jones. I need a key.". Example 2: "2,*,30,*,*" says "I want to be paired with another player. The registry key handed to me by the server is 30."
   </li>
   <li>Each request *should* get some kind of data in return. If no data is recieved, the server expects you to send the same data again. In the worst case, recieving most error codes indicates that the client must go back to step 1 and register.</li>
-  <li>Data coming from the server starting with "0/" indicates success. The client is expected to change their incoming symbol depending on the data they get back from the server, so that the server knows the client agrees with it. For example, The client sends "0,Martha Stewart,*,*,*" - requesting to register. The server sends back "0/0/15", telling the client registration is successful and their key during the pairing process will be "15". So, the next request to the server should be "2,*,15,*,*,*", requesting pairing for the client with key 15.</li>
+  <li>Data coming from the server starting with "0/" indicates success. The client is expected to change their incoming symbol depending on the data they get back from the server, so that the server knows the client agrees with it. For example, The client sends <blockquote>0,Martha Stewart,*,*,*</blockquote> - requesting to register. The server sends back "0/0/15", telling the client registration is successful and their key during the pairing process will be "15". So, the next request to the server should be "2,*,15,*,*,*", requesting pairing for the client with key 15.</li>
   <li>The pairing process ends when the client gets a C_MSG_START_PLAY message. The message will come with a game key and the client's player key, which need to be supplied with all future requests.</li>
   <li>All formatted data going forward will be game data. The format is determined on the client end, because the server only passes the data along.</li>
   <li>command line arguments are detailed above __main__</p>
