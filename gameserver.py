@@ -24,23 +24,22 @@ from threading import Timer
 from sys import argv
 from time import time
 
-
 #---------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------:init vars
 #---------------------------------------------------------------------------------------------------
 
 
-#TODO: make more robust, don't allow too many requests from one IP address
-#TODO: unsafe states - susceptible to spam; should create hashes for keys
+#TODO: to be put into production, must stop spam from IP's
+#TODO: to be put into production, needs a good hash generator for keys
 
-MAX_CONTENT_LEN = 4096
-MAX_CACHE_LEN = 16384
+MAX_CONTENT_LEN = 16384
+MAX_CACHE_LEN = 131072
 
-PAIRING_MAX_KEYS = 100
+PAIRING_MAX_KEYS = 1000
 pairing_registry = [None for i in range(PAIRING_MAX_KEYS)]
 pairing_key_assign_ctr = 0
 
-GAME_MAX_KEYS = 100
+GAME_MAX_KEYS = 500
 game_registry = [None for i in range(GAME_MAX_KEYS)]
 game_key_assign_ctr = 0
 game_msg_table = [[[-1, None, 0], [-1, None, 0]] for i in range(GAME_MAX_KEYS)]
@@ -50,7 +49,8 @@ bibbybabbis_timeout = 180
 map_load_timeout = 30
 game_timeout = 20
 verbose_update_time = 10
-prev_time = 0
+prev_time = 0.0
+compute_delta_time = 0.0
 
 # -- internal symbols --
 
@@ -68,7 +68,7 @@ STATUS_READY =          3
 STATUS_PLAYING_INIT =   4
 STATUS_PLAYING =        5
 
-# 'bibbybabbis' is a debug cheat code that gives 3 minute drop timeout between updates during pairing
+# 'bibbybabbis' is a debug cheat code that gives a long drop timeout between updates during pairing
 REGISTER_ME_KEY =   -1
 BIBBY_KEY =         -2 
 
@@ -85,40 +85,40 @@ NOTIFY_GAME_UPDATE =    6
 # -- outgoing symbols -- 
 
 C_MSG_REGISTER_OK =     "0/0/"
-C_MSG_UNREGISTER_OK =   "0/1/*\n"
-C_MSG_PAIRING =         "0/2/*\n"
+C_MSG_UNREGISTER_OK =   "0/1/*"
+C_MSG_PAIRING =         "0/2/*"
 C_MSG_START_SERVER =    "0/3/"
 C_MSG_START_CLIENT =    "0/4/"
 C_MSG_INIT_SERVER =     "0/5/"
 C_MSG_INIT_CLIENT =     "0/6/"
-C_MSG_PARTNER_LOAD =    "0/7/*\n"
+C_MSG_PARTNER_LOAD =    "0/7/*"
 C_MSG_START_PLAY =      "0/8/"
 C_MSG_GAME_DATA =       "0/9/"
-C_MSG_GAME_NO_DATA =    "0/10/*\n"
+C_MSG_GAME_NO_DATA =    "0/10/*"
 
-ERROR_BAD_CONTENT_LEN =     "1/*/*\n"
-ERROR_NO_POST_DATA =        "2/*/*\n"
-ERROR_NO_CLIENT_ADDRESS =   "3/*/*\n"
-ERROR_POST_DATA_FORMAT_0 =  "4/0/*\n"
-ERROR_POST_DATA_FORMAT_1 =  "4/1/*\n"
-ERROR_POST_DATA_FORMAT_2 =  "4/2/*\n"
-ERROR_POST_DATA_FORMAT_3 =  "4/3/*\n"
-ERROR_NOT_REGISTERED =      "5/*/*\n"
-ERROR_BAD_REGISTER_SYMBOL = "6/*/*\n"
-ERROR_REGISTER_FAIL =       "7/*/*\n"
-ERROR_KEEP_ALIVE_FAIL =     "8/*/*\n"
-ERROR_PARTNER_DROP =        "9/2/*\n"
-ERROR_DROPPED =             "10/*/*\n"
-ERROR_PAIRING_KEYS_MAXED =  "11/*/*\n"
-ERROR_GAME_KEYS_MAXED =     "12/*/*\n"
-ERROR_NO_GAME =             "13/*/*\n"
-ERROR_NO_PLAYER_SELF =      "14/*/*\n"
-ERROR_NO_PLAYER_PARTNER =   "15/*/*\n"
-ERROR_BAD_PARTNER_NAME =    "16/*/*\n"
-ERROR_KNOWN_PARTNER_DROP =  "17/*/*\n"
-ERROR_PLAYER_STATE_BEHIND = "18/*/*\n"
-ERROR_PLAYER_STATE_AHEAD =  "19/*/*\n"
-ERROR_OVER_CONTENT_LEN =    "20/*/*\n"
+ERROR_BAD_CONTENT_LEN =     "1/*/*"
+ERROR_NO_POST_DATA =        "2/*/*"
+ERROR_NO_CLIENT_ADDRESS =   "3/*/*"
+ERROR_POST_DATA_FORMAT_0 =  "4/0/*"
+ERROR_POST_DATA_FORMAT_1 =  "4/1/*"
+ERROR_POST_DATA_FORMAT_2 =  "4/2/*"
+ERROR_POST_DATA_FORMAT_3 =  "4/3/*"
+ERROR_NOT_REGISTERED =      "5/*/*"
+ERROR_BAD_REGISTER_SYMBOL = "6/*/*"
+ERROR_REGISTER_FAIL =       "7/*/*"
+ERROR_KEEP_ALIVE_FAIL =     "8/*/*"
+ERROR_PARTNER_DROP =        "9/2/*"
+ERROR_DROPPED =             "10/*/*"
+ERROR_PAIRING_KEYS_MAXED =  "11/*/*"
+ERROR_GAME_KEYS_MAXED =     "12/*/*"
+ERROR_NO_GAME =             "13/*/*"
+ERROR_NO_PLAYER_SELF =      "14/*/*"
+ERROR_NO_PLAYER_PARTNER =   "15/*/*"
+ERROR_BAD_PARTNER_NAME =    "16/*/*"
+ERROR_KNOWN_PARTNER_DROP =  "17/*/*"
+ERROR_PLAYER_STATE_BEHIND = "18/*/*"
+ERROR_PLAYER_STATE_AHEAD =  "19/*/*"
+ERROR_OVER_CONTENT_LEN =    "20/*/*"
 ERROR_GAME_CACHE_MAXED =    "21/*/"
 
 
@@ -193,15 +193,21 @@ class Game:
 
 class GameNotifyHandler(BaseHTTPRequestHandler):
 
+    def log_message(self, format, *args):
+        return
+
     # Unused
     def do_GET(self):
+        # returns the amount of time spent on the last do_POST() call
         self._set_response(200);
+        self.wfile.write(str(compute_delta_time).encode('utf-8'))
 
 
     def do_POST(self):
         global pairing_key_assign_ctr
         global game_key_assign_ctr
         global prev_time
+        global compute_delta_time
 
         # -- run timeouts -- 
 
@@ -259,7 +265,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
         record_to = TABLE_NONE
         parse_validate_success, return_msg = self.parse_and_validate(post_data, ip_address)
 
-        # -- update state -- 
+        # -- update state and return data -- 
 
         if parse_validate_success:
             if self.notify_type >= NOTIFY_GAME_QUIT:
@@ -292,7 +298,8 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
 
         self._set_response(http_code)
         self.wfile.write(return_msg.encode('utf-8'))
-        log(f"{dt}\n{return_msg}\n{post_data}\n{ip_address}")
+        compute_delta_time = time() - new_time
+        # log(f"{dt}\n{return_msg}\n{post_data}\n{ip_address}")
 
 
     def parse_and_validate(self, post_data, ip_address):
@@ -363,12 +370,12 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                         game_key = prepare_game(player, partner)
                         player.server_status = STATUS_PLAYING_INIT
                         partner.server_status = STATUS_PLAYING_INIT
-                        return True, f'{C_MSG_START_PLAY}{game_key}0\n'
+                        return True, f'{C_MSG_START_PLAY}{game_key}|0'
                 else:
                     player.server_status = STATUS_READY
                     return True, C_MSG_PARTNER_LOAD
             elif player.server_status == STATUS_PLAYING_INIT:
-                msg = f'{C_MSG_START_PLAY}{player.game_key[0]}{player.game_key[1]}\n'
+                msg = f'{C_MSG_START_PLAY}{player.game_key[0]}|{player.game_key[1]}'
                 return True, msg
         elif self.notify_type == NOTIFY_REQUEST_PAIR:
             player.time_left = player.timeout_len
@@ -392,7 +399,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                             partner.server_status = STATUS_PAIRED
                             player.role = ROLE_SERVER
                             partner.role = ROLE_CLIENT
-                            return True, f'{C_MSG_START_SERVER}{partner.name}\n'
+                            return True, f'{C_MSG_START_SERVER}{partner.name}'
                 else:
                     # player selected to be paired with another specific player
                     for partner_key in range(pairing_key_assign_ctr):
@@ -408,17 +415,17 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                             partner.server_status = STATUS_PAIRED
                             player.role = ROLE_SERVER
                             partner.role = ROLE_CLIENT
-                            return True, f'{C_MSG_START_SERVER}{partner.name}\n'
+                            return True, f'{C_MSG_START_SERVER}{partner.name}'
                 return True, C_MSG_PAIRING
             elif player.server_status == STATUS_PAIRED:
                 pair_valid, msg, partner = self.pair_validate(player)
                 if not pair_valid:
                     return False, msg   
                 if player.role == ROLE_CLIENT:
-                    return True, f'{C_MSG_START_CLIENT}{partner.name}\n'
+                    return True, f'{C_MSG_START_CLIENT}{partner.name}'
                 else:
                     # just in case they didn't get the msg earlier
-                    return True, f'{C_MSG_START_SERVER}{partner.name}\n'
+                    return True, f'{C_MSG_START_SERVER}{partner.name}'
         elif self.notify_type == NOTIFY_REGISTER:
             if self.key != REGISTER_ME_KEY and self.key != BIBBY_KEY:
                 return False, ERROR_BAD_REGISTER_SYMBOL
@@ -443,10 +450,9 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                 if self.player_key != '*':
                     player.partner_name = self.player_key
                 pairing_registry[self.key] = player
-                return True, f"{C_MSG_REGISTER_OK}{self.key}\n"
+                return True, f"{C_MSG_REGISTER_OK}{self.key}"
             except:
                 return False, ERROR_REGISTER_FAIL
-        
         
         # gets NOTIFY_UNREGISTER and other potential client-server misaligned cases
         pairing_purge_entry(self.key)
@@ -475,18 +481,12 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
 
         if self.game.updated[self.partner_key]:
             self.game.time_left = game_timeout
-            # if not self.game.purged_pairing_entries:
-            #     pairing_purge_entry(self.player.partner_key)
-            #     pairing_purge_entry(self.partner.partner_key)
-            #     self.player.server_status = STATUS_PLAYING
-            #     self.partner.server_status = STATUS_PLAYING
-            #     self.game.purged_pairing_entries = True
             
             partner_data = '|'.join(self.game.data[self.partner_key])
             self.game.updated[self.partner_key] = False
             self.game.data[self.partner_key].clear()
 
-            return True, f'{C_MSG_GAME_DATA}{partner_data}\n'
+            return True, f'{C_MSG_GAME_DATA}{partner_data}'
         return True, C_MSG_GAME_NO_DATA
             
 
@@ -509,16 +509,16 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
         partner_key = 0 if self.player_key == 1 else 1
         old_data = table_entry[1]
         new_data = game.data[partner_key]
-        combined_data = old_data + "|" + new_data
+        combined_data = old_data + "|" + '|'.join(new_data)
 
         game.data[partner_key].clear()
         game.updated[partner_key] = False
 
         if len(combined_data) <= MAX_CACHE_LEN:
             game_msg_table[self.key][self.player_key][1] = combined_data
-            return f'{C_MSG_GAME_DATA}{combined_data}\n'
+            return f'{C_MSG_GAME_DATA}{combined_data}'
         else:
-            return f'{ERROR_GAME_CACHE_MAXED}{old_data}\n'
+            return f'{ERROR_GAME_CACHE_MAXED}{old_data}'
 
 
     def _set_response(self, val):
@@ -533,7 +533,6 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
 
 
 def partner_drop_reset(player):
-    player.bad_partner_keys.add(player.partner_key)
     player.partner_key = -1
     player.server_status = STATUS_REGISTERED
     player.role = ROLE_NONE
@@ -567,7 +566,7 @@ def game_purge_entry(key):
     game.players.clear()
     game.data.clear()
     game_registry[key] = None
-    game_msg_table[key] = [[None, None, 0], [None, None, 0]]
+    game_msg_table[key] = [[-1, None, 0], [-1, None, 0]]
     if key < game_key_assign_ctr:
         game_key_assign_ctr = key
 
@@ -637,7 +636,7 @@ if __name__ == '__main__':
 
     # -- default args --
     port = 80
-    verbose = True
+    verbose = False
 
     arg_ct = len(argv)
     if arg_ct > 1:
