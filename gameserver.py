@@ -1,5 +1,5 @@
 """
-A meticulous and lightweight HTTP TURN server for demo-ing my game's 2p multiplayer. 
+A meticulous and minimal HTTP TURN server for demo-ing my game's 2p multiplayer. 
 
 It isn't made to be extended or generalized - only to exactly suit the needs of my game. However, it 
 may be useful to you if you want a two client data relay with matchmaking that is fairly simple and 
@@ -22,6 +22,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from threading import Timer
 from sys import argv
+from time import time
 
 
 #---------------------------------------------------------------------------------------------------
@@ -37,18 +38,19 @@ MAX_CACHE_LEN = 16384
 
 PAIRING_MAX_KEYS = 100
 pairing_registry = [None for i in range(PAIRING_MAX_KEYS)]
-pairing_key_assign_ctr = [0]
+pairing_key_assign_ctr = 0
 
 GAME_MAX_KEYS = 100
 game_registry = [None for i in range(GAME_MAX_KEYS)]
-game_key_assign_ctr = [0]
+game_key_assign_ctr = 0
 game_msg_table = [[[-1, None, 0], [-1, None, 0]] for i in range(GAME_MAX_KEYS)]
 
-purge_timeout = 20
+purge_timeout = 10 
 bibbybabbis_timeout = 180
-map_load_timeout = 45
-game_timeout = 30
+map_load_timeout = 30
+game_timeout = 20
 verbose_update_time = 10
+prev_time = 0
 
 # -- internal symbols --
 
@@ -66,8 +68,9 @@ STATUS_READY =          3
 STATUS_PLAYING_INIT =   4
 STATUS_PLAYING =        5
 
+# 'bibbybabbis' is a debug cheat code that gives 3 minute drop timeout between updates during pairing
 REGISTER_ME_KEY =   -1
-BIBBY_KEY =         -2 # debug cheat code, adds time to pairing timeout
+BIBBY_KEY =         -2 
 
 # -- incoming symbols -- 
 
@@ -96,7 +99,10 @@ C_MSG_GAME_NO_DATA =    "0/10/*\n"
 ERROR_BAD_CONTENT_LEN =     "1/*/*\n"
 ERROR_NO_POST_DATA =        "2/*/*\n"
 ERROR_NO_CLIENT_ADDRESS =   "3/*/*\n"
-ERROR_POST_DATA_FORMAT =    "4/*/*\n"
+ERROR_POST_DATA_FORMAT_0 =  "4/0/*\n"
+ERROR_POST_DATA_FORMAT_1 =  "4/1/*\n"
+ERROR_POST_DATA_FORMAT_2 =  "4/2/*\n"
+ERROR_POST_DATA_FORMAT_3 =  "4/3/*\n"
 ERROR_NOT_REGISTERED =      "5/*/*\n"
 ERROR_BAD_REGISTER_SYMBOL = "6/*/*\n"
 ERROR_REGISTER_FAIL =       "7/*/*\n"
@@ -132,8 +138,7 @@ class Player:
         self.role = ROLE_NONE
         self.address = args[2]
         self.timeout_len = args[3]
-        self.timer = Timer(self.timeout_len, pairing_purge_entry, args=[args[0]])
-        self.timer.start()
+        self.time_left = self.timeout_len
         self.pairing_key = args[0]
         self.game_key = None
 
@@ -162,11 +167,9 @@ class Game:
     def __init__(self, args):
         self.players = [args[1], args[2]]
         self.data = [[], []]
-        self.player_state[0, 0]
+        self.player_state = [0, 0]
         self.updated = [False, False]
-        self.purged_pairing_entries = False
-        self.timer = Timer(game_timeout, game_purge_entry, args=[args[0]])
-        self.timer.start()
+        self.time_left = game_timeout
 
     def __repr__(self):
         p0 = self.players[0]
@@ -196,6 +199,32 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
 
 
     def do_POST(self):
+        global pairing_key_assign_ctr
+        global game_key_assign_ctr
+        global prev_time
+
+        # -- run timeouts -- 
+
+        new_time = time()
+        delta_time = new_time - prev_time
+        prev_time = new_time
+        for i in range(PAIRING_MAX_KEYS):
+            player = pairing_registry[i]
+            if player is not None:
+                if delta_time > player.time_left:
+                    pairing_purge_entry(i)
+                else:
+                    player.time_left -= delta_time
+        for i in range(GAME_MAX_KEYS):
+            game = game_registry[i]
+            if game is not None:
+                if delta_time > game.time_left:
+                    game_purge_entry(i)
+                else:
+                    game.time_left -= delta_time
+
+        # -- check for basic POST format issues -- 
+
         dt = datetime.now().strftime("%d/%m/%y %H:%M:%S")
         try:
             content_length = int(self.headers['Content-Length'])
@@ -224,21 +253,26 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             self.wfile.write(ERROR_NO_CLIENT_ADDRESS)
             return;
 
+        # -- parse and validate POST message -- 
+
         http_code = 400
         record_to = TABLE_NONE
         parse_validate_success, return_msg = self.parse_and_validate(post_data, ip_address)
 
+        # -- update state -- 
+
         if parse_validate_success:
             if self.notify_type >= NOTIFY_GAME_QUIT:
-                # a table for sending the same data + new data back if we get the same message in, as 
+                # a table for sending old data + new data back if we get the same message in, as 
                 # well as validating the states of the players during data transfer
                 table_entry = game_msg_table[self.key][self.player_key]
-                if self.player_state == table_entry[0]:
+                previous_state = table_entry[0]
+                if self.player_state == previous_state:
                     return_msg = self.game_redundant_msg_update(table_entry)
                     http_code = table_entry[2]
-                elif self.player_state > table_entry[0] + 1:
+                elif self.player_state > previous_state + 1:
                     return_msg = ERROR_PLAYER_STATE_AHEAD
-                elif self.player_state < table_entry[0]:
+                elif self.player_state < previous_state:
                     return_msg = ERROR_PLAYER_STATE_BEHIND
                 else:
                     game_working, return_msg = self.game_update()
@@ -248,7 +282,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             else:
                 pair_working, return_msg = self.pair_player()
                 if pair_working:
-                    self._set_response(200)
+                    http_code = 200
 
         if record_to == TABLE_GAME and game_working:
             table_entry = game_msg_table[self.key][self.player_key]
@@ -256,65 +290,147 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             table_entry[1] = return_msg
             table_entry[2] = http_code
 
-        self.wfile.write(return_msg.encode('utf-8'))
         self._set_response(http_code)
-        # self.log_request(http_code)
-        # self.send_response_only(http_code)
-        # self.end_headers()
+        self.wfile.write(return_msg.encode('utf-8'))
         log(f"{dt}\n{return_msg}\n{post_data}\n{ip_address}")
 
 
     def parse_and_validate(self, post_data, ip_address):
-        err_switch_unregistered = False
-        try:
-            data_parts = post_data.split(",")
-            self.notify_type = int(data_parts[0])
-            assert 0 <= self.notify_type <= NOTIFY_GAME_UPDATE
-            self.post_data = data_parts[1]
-            _key = data_parts[2]
-            if self.notify_type >= NOTIFY_GAME_QUIT:
-                self.player_key = int(data_parts[3])
-                assert self.player_key == 0 or self.player_key == 1
-                self.state = int(data_parts[4])
-                assert self.state >= 0
-            else:
-                self.player_key = data_parts[3]
+        data_parts = post_data.split(",")
 
-            self.player = None
-            if self.notify_type == NOTIFY_REGISTER:
-                if _key == '*':
-                    self.key = REGISTER_ME_KEY
-                elif _key == 'bibbybabbis':
-                    self.key = BIBBY_KEY
-                else:
-                    return False, ERROR_POST_DATA_FORMAT
+        self.notify_type = int(data_parts[0])
+        if self.notify_type < 0 or self.notify_type > NOTIFY_GAME_UPDATE:
+            return False, ERROR_POST_DATA_FORMAT_0
+        self.post_data = data_parts[1]
+        if self.notify_type >= NOTIFY_GAME_QUIT:
+            self.player_key = int(data_parts[3])
+            if self.player_key != 0 and self.player_key != 1:
+                return False, ERROR_POST_DATA_FORMAT_1
+            self.player_state = int(data_parts[4])
+            if self.player_state < 0:
+                return False, ERROR_POST_DATA_FORMAT_2
+        else:
+            self.player_key = data_parts[3]
+
+        self.player = None
+        _key = data_parts[2]
+        if self.notify_type == NOTIFY_REGISTER:
+            if _key == '*':
+                self.key = REGISTER_ME_KEY
+            elif _key == 'bibbybabbis':
+                self.key = BIBBY_KEY
             else:
-                self.key = int(_key)
-                assert 0 <= self.key < pairing_key_assign_ctr[0]
-                self.player = pairing_registry[self.key]
-                err_switch_unregistered = (self.player == None)
-        except:
-            return False, ERROR_POST_DATA_FORMAT
-        if err_switch_unregistered:
-            return False, ERROR_NOT_REGISTERED
+                return False, ERROR_POST_DATA_FORMAT_3
+        elif self.notify_type < NOTIFY_GAME_QUIT:
+            self.key = int(_key)
+            if (self.key < 0 or self.key >= pairing_key_assign_ctr) \
+            or pairing_registry[self.key] is None:
+                return False, ERROR_NOT_REGISTERED
+            self.player = pairing_registry[self.key]
+        else:
+            self.key = int(_key)
+            # game data validation handled in game_validate()
         
         self.ip_address = ip_address
-        return True, ''
+        return True, None
 
 
     def pair_player(self):
-        if self.notify_type == NOTIFY_REGISTER:
+        global pairing_key_assign_ctr
+        player = self.player
+        if self.notify_type == NOTIFY_MAP_INIT and player.server_status == STATUS_PAIRED:
+            player.time_left = player.timeout_len
+            pair_valid, msg, partner = self.pair_validate(player)
+            if not pair_valid:
+                return False, msg
+            player.server_status = STATUS_LOADING
+            if player.role == ROLE_CLIENT:
+                return True, C_MSG_INIT_CLIENT
+            else:
+                return True, C_MSG_INIT_SERVER 
+        elif self.notify_type == NOTIFY_MAP_READY:
+            player.time_left = player.timeout_len
+            pair_valid, msg, partner = self.pair_validate(player)
+            if not pair_valid:
+                return False, msg
+            if player.server_status == STATUS_LOADING or player.server_status == STATUS_READY:
+                if partner.server_status == STATUS_READY:
+                    if game_key_assign_ctr >= GAME_MAX_KEYS:
+                        pairing_purge_entry(player)
+                        pairing_purge_entry(partner)
+                        return False, ERROR_GAME_KEYS_MAXED
+                    else:
+                        game_key = prepare_game(player, partner)
+                        player.server_status = STATUS_PLAYING_INIT
+                        partner.server_status = STATUS_PLAYING_INIT
+                        return True, f'{C_MSG_START_PLAY}{game_key}0\n'
+                else:
+                    player.server_status = STATUS_READY
+                    return True, C_MSG_PARTNER_LOAD
+            elif player.server_status == STATUS_PLAYING_INIT:
+                msg = f'{C_MSG_START_PLAY}{player.game_key[0]}{player.game_key[1]}\n'
+                return True, msg
+        elif self.notify_type == NOTIFY_REQUEST_PAIR:
+            player.time_left = player.timeout_len
+            if player.server_status == STATUS_REGISTERED:
+                if player.partner_name is None:
+                    # matchmaking
+                    for partner_key in range(pairing_key_assign_ctr):
+                        partner = pairing_registry[partner_key]
+                        if partner_key != self.key \
+                        and partner is not None \
+                        and partner.server_status == STATUS_REGISTERED \
+                        and player.name not in partner.bad_partner_names \
+                        and partner.name not in player.bad_partner_names:
+                            # if either player drops before the game starts, we decide not to
+                            # attempt to pair them again
+                            player.bad_partner_names.add(partner.name)
+                            partner.bad_partner_names.add(player.name)
+                            player.partner_key = partner_key
+                            partner.partner_key = self.key
+                            player.server_status = STATUS_PAIRED
+                            partner.server_status = STATUS_PAIRED
+                            player.role = ROLE_SERVER
+                            partner.role = ROLE_CLIENT
+                            return True, f'{C_MSG_START_SERVER}{partner.name}\n'
+                else:
+                    # player selected to be paired with another specific player
+                    for partner_key in range(pairing_key_assign_ctr):
+                        partner = pairing_registry[partner_key]
+                        if partner_key != self.key \
+                        and partner is not None \
+                        and partner.server_status == STATUS_REGISTERED \
+                        and player.partner_name == partner.name \
+                        and partner.partner_name == player.name:
+                            player.partner_key = partner_key
+                            partner.partner_key = self.key
+                            player.server_status = STATUS_PAIRED
+                            partner.server_status = STATUS_PAIRED
+                            player.role = ROLE_SERVER
+                            partner.role = ROLE_CLIENT
+                            return True, f'{C_MSG_START_SERVER}{partner.name}\n'
+                return True, C_MSG_PAIRING
+            elif player.server_status == STATUS_PAIRED:
+                pair_valid, msg, partner = self.pair_validate(player)
+                if not pair_valid:
+                    return False, msg   
+                if player.role == ROLE_CLIENT:
+                    return True, f'{C_MSG_START_CLIENT}{partner.name}\n'
+                else:
+                    # just in case they didn't get the msg earlier
+                    return True, f'{C_MSG_START_SERVER}{partner.name}\n'
+        elif self.notify_type == NOTIFY_REGISTER:
             if self.key != REGISTER_ME_KEY and self.key != BIBBY_KEY:
                 return False, ERROR_BAD_REGISTER_SYMBOL
-            if (pairing_key_assign_ctr[0] >= PAIRING_MAX_KEYS):
+            if (pairing_key_assign_ctr >= PAIRING_MAX_KEYS):
                 return False, ERROR_PAIRING_KEYS_MAXED
             try:
                 in_key = self.key
-                self.key = pairing_key_assign_ctr[0]
-                pairing_key_assign_ctr[0] += 1
-                while pairing_key_assign_ctr[0] < PAIRING_MAX_KEYS \
-                and pairing_registry[pairing_key_assign_ctr[0]] != None:
-                    pairing_key_assign_ctr[0] += 1
+                self.key = pairing_key_assign_ctr
+                pairing_key_assign_ctr += 1
+                while pairing_key_assign_ctr < PAIRING_MAX_KEYS \
+                and pairing_registry[pairing_key_assign_ctr] != None:
+                    pairing_key_assign_ctr += 1
                 if in_key == REGISTER_ME_KEY: 
                     player = \
                         Player((self.key, self.post_data, self.ip_address, purge_timeout))
@@ -330,99 +446,14 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                 return True, f"{C_MSG_REGISTER_OK}{self.key}\n"
             except:
                 return False, ERROR_REGISTER_FAIL
-        else:
-            player = self.player
-            if self.notify_type == NOTIFY_REQUEST_PAIR:
-                if player.server_status == STATUS_REGISTERED:
-                    restarted_timer = pairing_keep_alive(self.key)
-                    if not restarted_timer:
-                        pairing_purge_entry(self.key)
-                        return False, ERROR_KEEP_ALIVE_FAIL
-                    if player.partner_name is None:
-                        for partner_key in range(pairing_key_assign_ctr[0]):
-                            partner = pairing_registry[partner_key]
-                            if partner_key != self.key \
-                            and partner is not None \
-                            and partner.server_status == STATUS_REGISTERED \
-                            and player.name not in partner.bad_partner_names \
-                            and partner.name not in player.bad_partner_names:
-                                # if either player drops before the game starts, we decide not to
-                                # attempt to pair them again
-                                player.bad_partner_names.add(partner.name)
-                                partner.bad_partner_names.add(player.name)
-                                player.partner_key = partner_key
-                                partner.partner_key = self.key
-                                player.server_status = STATUS_PAIRED
-                                partner.server_status = STATUS_PAIRED
-                                player.role = ROLE_SERVER
-                                partner.role = ROLE_CLIENT
-                                return True, f'{C_MSG_START_SERVER}{partner.name}\n'
-                    else:
-                        for partner_key in range(pairing_key_assign_ctr[0]):
-                            partner = pairing_registry[partner_key]
-                            if partner_key != self.key \
-                            and partner is not None \
-                            and partner.server_status == STATUS_REGISTERED \
-                            and player.partner_name == partner.name \
-                            and partner.partner_name == player.name:
-                                player.partner_key = partner_key
-                                partner.partner_key = self.key
-                                player.server_status = STATUS_PAIRED
-                                partner.server_status = STATUS_PAIRED
-                                player.role = ROLE_SERVER
-                                partner.role = ROLE_CLIENT
-                                return True, f'{C_MSG_START_SERVER}{partner.name}\n'
-                    return True, C_MSG_PAIRING
-                elif player.server_status == STATUS_PAIRED:
-                    pair_valid, msg, partner = self.pair_validate(player)
-                    if not pair_valid:
-                        return False, msg   
-                    if player.role == ROLE_CLIENT:
-                        return True, f'{C_MSG_START_CLIENT}{partner.name}\n'
-                    else:
-                        # just in case they didn't get the msg earlier
-                        return True, f'{C_MSG_START_SERVER}{partner.name}\n'
-            elif self.notify_type == NOTIFY_MAP_INIT and player.server_status == STATUS_PAIRED:
-                pair_valid, msg, partner = self.pair_validate(player)
-                if not pair_valid:
-                    return False, msg
-                player.server_status = STATUS_LOADING
-                if player.role == ROLE_CLIENT:
-                    return True, C_MSG_INIT_CLIENT
-                else:
-                    return True, C_MSG_INIT_SERVER 
-            elif self.notify_type == NOTIFY_MAP_READY:
-                pair_valid, msg, partner = self.pair_validate(player)
-                if not pair_valid:
-                    return False, msg
-                if player.server_status == STATUS_LOADING or player.server_status == STATUS_READY:
-                    if partner.server_status == STATUS_READY:
-                        if game_key_assign_ctr[0] >= GAME_MAX_KEYS:
-                            pairing_purge_entry(player)
-                            pairing_purge_entry(partner)
-                            return False, ERROR_GAME_KEYS_MAXED
-                        else:
-                            game_key = prepare_game(player, partner)
-                            player.server_status = STATUS_PLAYING_INIT
-                            partner.server_status = STATUS_PLAYING_INIT
-                            return True, f'{C_MSG_START_PLAY}{game_key}0\n'
-                    else:
-                        player.server_status = STATUS_READY
-                        return True, C_MSG_PARTNER_LOAD
-                elif player.server_status == STATUS_PLAYING_INIT:
-                    msg = f'{C_MSG_START_PLAY}{player.game_key[0]}{player.game_key[1]}\n'
-                    return True, msg
-
+        
+        
         # gets NOTIFY_UNREGISTER and other potential client-server misaligned cases
         pairing_purge_entry(self.key)
         return False, ERROR_DROPPED
 
 
     def pair_validate(self, player):
-        restarted_timer = pairing_keep_alive(self.key, map_load_timeout)
-        if not restarted_timer:
-            pairing_purge_entry(self.key)
-            return False, ERROR_KEEP_ALIVE_FAIL, None
         partner = pairing_registry[player.partner_key]
         if partner is None:
             if player.partner_name is None:
@@ -440,15 +471,16 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             return False, msg
             
         self.game.updated[self.player_key] = True
-        self.game.data[self.player_key][0].append(self.post_data)
+        self.game.data[self.player_key].append(self.post_data)
 
         if self.game.updated[self.partner_key]:
-            if not self.game.purged_pairing_entries:
-                pairing_purge_entry(self.player.pairing_key)
-                pairing_purge_entry(self.partner.pairing_key)
-                self.player.server_status = STATUS_PLAYING
-                self.partner.server_status = STATUS_PLAYING
-                self.game.purged_pairing_entries = True
+            self.game.time_left = game_timeout
+            # if not self.game.purged_pairing_entries:
+            #     pairing_purge_entry(self.player.partner_key)
+            #     pairing_purge_entry(self.partner.partner_key)
+            #     self.player.server_status = STATUS_PLAYING
+            #     self.partner.server_status = STATUS_PLAYING
+            #     self.game.purged_pairing_entries = True
             
             partner_data = '|'.join(self.game.data[self.partner_key])
             self.game.updated[self.partner_key] = False
@@ -464,12 +496,10 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             return False, ERROR_NO_GAME
         self.player = self.game.players[self.player_key]
         if self.player is None:
-            game_purge_entry(self.key)
             return False, ERROR_NO_PLAYER_SELF
-        self.partner_key = (0 if self.player_key == 1 else 0)
+        self.partner_key = (0 if self.player_key == 1 else 1)
         self.partner = self.game.players[self.partner_key]
         if self.partner is None:
-            game_purge_entry(self.key)
             return False, ERROR_NO_PLAYER_PARTNER
         return True, 0
 
@@ -492,7 +522,6 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
 
 
     def _set_response(self, val):
-        pass
         self.send_response(val)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
@@ -511,62 +540,36 @@ def partner_drop_reset(player):
 
 
 def prepare_game(player, partner):
-    game_key = game_key_assign_ctr[0]
-    game_registry[game_key] = Game(game_key, player, partner)
+    global game_key_assign_ctr
+    game_key = game_key_assign_ctr
+    game_registry[game_key] = Game((game_key, player, partner))
     player.game_key = (game_key, 0)
     partner.game_key = (game_key, 1)
 
-    game_key_assign_ctr[0] += 1
-    while game_key_assign_ctr[0] < GAME_MAX_KEYS \
-    and game_registry[game_key_assign_ctr[0]] != None:
-        game_key_assign_ctr[0] += 1
+    game_key_assign_ctr += 1
+    while game_key_assign_ctr < GAME_MAX_KEYS \
+    and game_registry[game_key_assign_ctr] != None:
+        game_key_assign_ctr += 1
 
     return game_key
 
 
 def pairing_purge_entry(key):
-    pairing_registry[key].timer.cancel()
-    pairing_registry[key].timer = None 
+    global pairing_key_assign_ctr
     pairing_registry[key] = None
-    if key < pairing_key_assign_ctr[0]:
-        pairing_key_assign_ctr[0] = key
-
-
-def pairing_keep_alive(key, timeout=0):
-    try:
-        entry = pairing_registry[key]
-        entry.timer.cancel()
-        if timeout > 0:
-            timer = Timer(timeout, pairing_purge_entry, args=[key])
-        else:
-            timer = Timer(entry.timeout_len, pairing_purge_entry, args=[key])
-        entry.timer = timer
-        return True
-    except:
-        return False
+    if key < pairing_key_assign_ctr:
+        pairing_key_assign_ctr = key
 
 
 def game_purge_entry(key):
+    global game_key_assign_ctr
     game = game_registry[key]
-    game.timer.cancel()
     game.players.clear()
     game.data.clear()
-    game.timer = None
     game_registry[key] = None
     game_msg_table[key] = [[None, None, 0], [None, None, 0]]
-    if key < game_key_assign_ctr[0]:
-        game_key_assign_ctr[0] = key
-
-
-def game_keep_alive(key):
-    try:
-        entry = game_registry[key]
-        entry.timer.cancel()
-        timer = Timer(game_timeout, game_purge_entry, args=[key])
-        entry.timer = timer
-        return True
-    except:
-        return False
+    if key < game_key_assign_ctr:
+        game_key_assign_ctr = key
 
 
 def log(info):
@@ -605,6 +608,11 @@ valid_argnames_info = (
     f"prints out connected clients every {verbose_update_time} seconds"
 )
 
+VALID_ARGS = \
+"------------\n" + "".join([
+    f"{valid_argnames[i][0]}, {valid_argnames[i][1]} :\t{valid_argnames_info[i]}\n" 
+    for i in range(len(valid_argnames))
+]) + "------------\n"
 ERRNAME_BAD_ARGNAME = """
 ------------
 __main__(): ERROR: malformed arg name
@@ -614,11 +622,6 @@ example(2): python3 webserver.py --help
 (see valid arguments)
 ------------
 """
-VALID_ARGS = \
-    "------------\n" + "".join([
-        f"{valid_argnames[i][0]}, {valid_argnames[i][1]} :\t{valid_argnames_info[i]}\n" 
-        for i in range(len(valid_argnames))
-    ]) + "------------\n"
 ERRNAME_PORT_MALFORMED = """
 ------------
 __main__(): ERROR: malformed port arg value
@@ -634,7 +637,7 @@ if __name__ == '__main__':
 
     # -- default args --
     port = 80
-    verbose = False
+    verbose = True
 
     arg_ct = len(argv)
     if arg_ct > 1:
@@ -668,6 +671,7 @@ if __name__ == '__main__':
     if verbose:
         print_registry()
     try:
+        prev_time = time()
         server.serve_forever()
     except KeyboardInterrupt:
         server.server_close()
