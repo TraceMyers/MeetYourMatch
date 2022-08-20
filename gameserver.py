@@ -45,10 +45,10 @@ game_registry = [None for i in range(GAME_MAX_KEYS)]
 game_key_assign_ctr = 0
 game_msg_table = [[[-1, None, 0], [-1, None, 0]] for i in range(GAME_MAX_KEYS)]
 
-purge_timeout = 10 
+purge_timeout = 25
 bibbybabbis_timeout = 180
 map_load_timeout = 30
-game_timeout = 20
+game_timeout = 30
 verbose_update_time = 10
 prev_time = 0.0
 compute_delta_time = 0.0

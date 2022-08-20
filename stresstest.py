@@ -6,7 +6,6 @@ multi-headed, for a few reasons. But, it appears to verify that the server handl
 well.
 """
 
-from tkinter import W
 import requests
 from requests.structures import CaseInsensitiveDict
 from time import sleep, time
@@ -46,7 +45,7 @@ class Client:
 
 
 def get_user_count_data():
-    user_ct = 20
+    user_ct = 50
     if len(argv) > 1:
         try:
             user_ct = int(argv[1])
@@ -123,8 +122,6 @@ def run_client(pnum, step_ct, client, response_codes, rc_comp, rc_net, error_cou
                 client.pair_key = game_keys[1]
                 client.next_post = f'6,{choice(strings)},{client.session_key},{client.pair_key},0'
         else:
-            if server_op_code == 5:
-                print(client)
             if not client.has_recieved_error:
                 client.has_recieved_error = True
                 counts_buf[2] += 1
@@ -220,9 +217,10 @@ def main():
     # ----------------------------------------------------------------------------------------------
 
     print("Running test...")
-    step_ct = 1000
+    step_ct = 500
     test_start = time()
     added_processes = 0
+    user_ct_strlen = len(str(user_ct))
     for i in range(len(clients)):
         client = clients[i]
         args = (
@@ -240,14 +238,24 @@ def main():
         p = Process(target=run_client, args=args)
         p.start()
         added_processes += 1
-        # print(f'\rprocesses started: {added_processes:03d}/{user_ct} ', end='')
+        if user_ct_strlen >= 3:
+            print(f'\rprocesses started:  {added_processes:03d}/{user_ct} ', end='')
+        elif user_ct_strlen == 2:
+            print(f'\rprocesses started:  {added_processes:02d}/{user_ct} ', end='')
+        else:
+            print(f'\rprocesses started:  {added_processes}/{user_ct} ', end='')
         sleep(3)
     print()
     while True:
         sleep(2)
         finished = finished_ct.get()
         finished_ct.put(finished)
-        # print(f'\rprocesses finished: {finished:03d}/{user_ct} ', end='')
+        if user_ct_strlen >= 3:
+            print(f'\rprocesses finished: {finished:03d}/{user_ct} ', end='')
+        elif user_ct_strlen == 2:
+            print(f'\rprocesses finished: {finished:02d}/{user_ct} ', end='')
+        else:
+            print(f'\rprocesses finished: {finished}/{user_ct} ', end='')
         if finished == user_ct:
             break
     test_end = time()
