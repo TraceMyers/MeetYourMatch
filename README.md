@@ -22,7 +22,5 @@
   <li>All formatted data going forward will be game data. The format is determined on the client end, because the server only passes the data along.</li>
   <li>command line arguments are detailed above __main__</p>
 </ul>
-
-<p>stresstest.py serves as the example code file. I may eventually create a python-based client script for arbitrary data passing so this repository can be considered more fully-functional.</p>
-
-<p>Running stresstest.py on a client machine provides summary statistics of performance. A single instance or the server has undergone tests on a 4-core Ubuntu machine and preliminary results show it can (at the very least) handle 30 clients sending single TCP packets 5 times per second. A distributed test will be necessary to better determine maximum load.</p>
+<p>stresstest.py serves as the example code file. Running stresstest.py on a client machine provides summary statistics of performance. A single instance or the server has undergone tests on a 4-core Ubuntu machine and preliminary results show it can (at the very least) handle 30 clients sending single TCP packets 5 times per second. A distributed test will be necessary to better determine maximum load.</p>
+<p> I may eventually create a python-based client script for arbitrary data passing so this repository can be considered more fully-functional.</p>
