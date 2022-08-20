@@ -1,21 +1,14 @@
 """
-A meticulous and minimal HTTP TURN server for demo-ing my game's 2p multiplayer. 
+A an HTTP TURN server for a small number of users, with two player first-come-first-serve
+matchmaking and pre-paired matching.
 
-It isn't made to be extended or generalized - only to exactly suit the needs of my game. However, it 
-may be useful to you if you want a two client data relay with matchmaking that is fairly simple and 
-has a multiple-step synchronization validation process during user connection.
+Once players are paired, this server relays data between the players. The language of the 
+C_MSG codes below assumes a video game client-server architecture wherein one player runs the game 
+server & client, and the other runs client only. However, this server makes (almost) no assumptions
+about the data being passed between players.
 
-The server handles two-player matchmaking on a first-come-first-serve basis as well as pre-paired 
-sessions. Once players are paired, this server relays data between the players. The language of the 
-C_MSG codes below assumes a client-server architecture wherein one player runs the game server & 
-client, and the other runs client only. However, this server makes (almost) no assumptions about the
-data being passed between players. So, your game or application could employ a p2p model, then treat 
-C_MSG_START_SERVER and C_MSG_START_CLIENT as meaning the same thing.
-
-By validating client state, the server supports sending data that represents changes to the game/app
-state. So, the entire state of the dataset does not always need to be sent. It does so by
-accruing data from one's partner until one's player_state changes. The data cache will stop growing 
-at a maximum of MAX_CACHE_LEN, at which point 'change only' data is no longer valid.
+This server holds onto data until the client informs the server that they recieved the previous
+package, allowing for change-only updates client-side.
 """
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -32,18 +25,18 @@ from time import time
 #TODO: to be put into production, must stop spam from IP's
 #TODO: to be put into production, needs a good hash generator for keys
 #TODO: put data field at the end so it can have commas
+#TODO: some drops don't save partner names to bad_partner_names
 
 MAX_CONTENT_LEN = 16384
 MAX_CACHE_LEN = 131072
 
-PAIRING_MAX_KEYS = 200 # should always be >= GAME_MAX_KEYS
-pairing_registry = [None for i in range(PAIRING_MAX_KEYS)]
+MAX_KEYS = 50
+pairing_registry = [None for i in range(MAX_KEYS)]
 pairing_key_assign_ctr = 0
 
-GAME_MAX_KEYS = 100
-game_registry = [None for i in range(GAME_MAX_KEYS)]
+game_registry = [None for i in range(MAX_KEYS)]
 game_key_assign_ctr = 0
-game_msg_table = [[[-1, None, 0], [-1, None, 0]] for i in range(GAME_MAX_KEYS)]
+game_msg_table = [[[-1, None, 0], [-1, None, 0]] for i in range(MAX_KEYS)]
 
 purge_timeout = 25
 bibbybabbis_timeout = 180
@@ -234,14 +227,13 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
         new_time = time()
         delta_time = new_time - prev_time
         prev_time = new_time
-        for i in range(PAIRING_MAX_KEYS):
+        for i in range(MAX_KEYS):
             player = pairing_registry[i]
             if player is not None:
                 if delta_time > player.time_left:
                     pairing_purge_entry(i)
                 else:
                     player.time_left -= delta_time
-        for i in range(GAME_MAX_KEYS):
             game = game_registry[i]
             if game is not None:
                 if delta_time > game.time_left:
@@ -350,7 +342,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                 return False, ERROR_POST_DATA_FORMAT_3
         elif self.notify_type < NOTIFY_GAME_QUIT:
             self.key = int(_key)
-            if (self.key < 0 or self.key >= PAIRING_MAX_KEYS) \
+            if (self.key < 0 or self.key >= MAX_KEYS) \
             or pairing_registry[self.key] is None:
                 return False, ERROR_NOT_REGISTERED
             self.player = pairing_registry[self.key]
@@ -382,7 +374,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                 return False, msg
             if player.server_status == STATUS_LOADING or player.server_status == STATUS_READY:
                 if partner.server_status == STATUS_READY:
-                    if game_key_assign_ctr >= GAME_MAX_KEYS:
+                    if game_key_assign_ctr >= MAX_KEYS:
                         pairing_purge_entry(player)
                         pairing_purge_entry(partner)
                         return False, ERROR_GAME_KEYS_MAXED
@@ -421,7 +413,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                             partner.role = ROLE_CLIENT
                             return True, f'{C_MSG_START_SERVER}{partner.name}'
                 else:
-                    # player selected to be paired with another specific player
+                    # player pre-paired with another specific player
                     for partner_key in range(pairing_key_assign_ctr):
                         partner = pairing_registry[partner_key]
                         if partner_key != self.key \
@@ -449,13 +441,13 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
         elif self.notify_type == NOTIFY_REGISTER:
             if self.key != REGISTER_ME_KEY and self.key != BIBBY_KEY:
                 return False, ERROR_BAD_REGISTER_SYMBOL
-            if (pairing_key_assign_ctr >= PAIRING_MAX_KEYS):
+            if (pairing_key_assign_ctr >= MAX_KEYS):
                 return False, ERROR_PAIRING_KEYS_MAXED
             try:
                 in_key = self.key
                 self.key = pairing_key_assign_ctr
                 pairing_key_assign_ctr += 1
-                while pairing_key_assign_ctr < PAIRING_MAX_KEYS \
+                while pairing_key_assign_ctr < MAX_KEYS \
                 and pairing_registry[pairing_key_assign_ctr] != None:
                     pairing_key_assign_ctr += 1
                 if in_key == REGISTER_ME_KEY: 
@@ -566,7 +558,7 @@ def prepare_game(player, partner):
     partner.game_key = (game_key, 1)
 
     game_key_assign_ctr += 1
-    while game_key_assign_ctr < GAME_MAX_KEYS \
+    while game_key_assign_ctr < MAX_KEYS \
     and game_registry[game_key_assign_ctr] != None:
         game_key_assign_ctr += 1
 
@@ -598,12 +590,12 @@ def log(info):
 
 def print_registry():
     print(f'pairing registry:')
-    for key in range(PAIRING_MAX_KEYS):
+    for key in range(MAX_KEYS):
         client_data = pairing_registry[key]
         if client_data is not None:
             print(f'{key}: {client_data}')
     print(f'\n---\ngame registry:')
-    for key in range(GAME_MAX_KEYS):
+    for key in range(MAX_KEYS):
         game_data = game_registry[key]
         if game_data is not None:
             print(f'{key}:\n{game_data}')

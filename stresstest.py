@@ -1,19 +1,21 @@
 """
-An admittedly imperfect stress test for my TURN server. Registers n users and tries to update
-them on average 5 times per second.
+Registers n users and tries to update them on average 5 times per second. A 2019 core i5 machine
+can pretend to be 
 
 Also functions as example code for how to interact with the server. May update in the future to
-provide a simple python-based client with less exposure.
+provide a simple command-line client for arbitrary data passing.
 """
 
 import requests
 from requests.structures import CaseInsensitiveDict
 from time import sleep, time
-from random import choice
+from random import choice, randint
 from sys import argv
 import numpy as np
 from matplotlib import pyplot as plt
 from multiprocessing import Process, Queue
+from pandas import DataFrame
+from statsmodels.api import OLS, add_constant
 
 with open('url.txt') as f:
     url = f.readline()
@@ -216,119 +218,180 @@ def run_client(
 def main():
     global names
     global data
-    user_ct = get_user_count_data() 
-    error_counts = Queue()
-    error_counts.put([0 for _ in range(22)])
-    request_code_compute_times = Queue()
-    request_code_compute_times.put([[] for _ in range(7)])
-    request_code_network_times = Queue()
-    request_code_network_times.put([[] for _ in range(7)])
-    response_codes = Queue()
-    response_codes.put([])
-    response_success_codes = Queue()
-    response_success_codes.put([])
-    error_list = Queue()
-    error_list.put([])
-    counts = Queue()
-    counts.put([0, 0, 0])
-    finished_ct = Queue()
-    finished_ct.put(0)
-    clients = [Client() for _ in range(user_ct)]
+    # user_ct = get_user_count_data() 
+    max_user_ct = 40
+    # 20 per variable is ok
+    trial_ct = 60
+    user_cts = [randint(2, max_user_ct) for _ in range(trial_ct)]
+    mean_compute_times = []
+    mean_network_times = []
+    mean_local_compute_times = []
 
     # ----------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------:test loop
     # ----------------------------------------------------------------------------------------------
-
-    print("Running test...")
-    step_ct = 500
-    test_start = time()
-    added_processes = 0
-    user_ct_strlen = len(str(user_ct))
-    for i in range(len(clients)):
-        client = clients[i]
     
-        args = (
-            i, # pnum
-            step_ct,  # step_ct
-            client,  # client
-            response_codes,  # rc
-            request_code_compute_times,  # rc_comp
-            request_code_network_times,  # rc_net
-            error_counts,  # ec
-            error_list,  # el
-            counts,  # cts
-            finished_ct, # finished
-            response_success_codes # rsc
+    for i in range(len(user_cts)):
+        user_ct = user_cts[i]
+        error_counts = Queue()
+        error_counts.put([0 for _ in range(22)])
+        request_code_compute_times = Queue()
+        request_code_compute_times.put([[] for _ in range(7)])
+        request_code_network_times = Queue()
+        request_code_network_times.put([[] for _ in range(7)])
+        response_codes = Queue()
+        response_codes.put([])
+        response_success_codes = Queue()
+        response_success_codes.put([])
+        error_list = Queue()
+        error_list.put([])
+        counts = Queue()
+        counts.put([0, 0, 0])
+        finished_ct = Queue()
+        finished_ct.put(0)
+        clients = [Client() for _ in range(user_ct)]
+
+        # clearing users on server
+        requests.post(url, headers=headers, data="0,nada,0,*,*")
+
+        print("Running test...")
+        step_ct = 250
+        test_start = time()
+        added_processes = 0
+        user_ct_strlen = len(str(user_ct))
+        for i in range(user_ct):
+            client = clients[i]
+            args = (
+                i, # pnum
+                step_ct,  # step_ct
+                client,  # client
+                response_codes,  # rc
+                request_code_compute_times,  # rc_comp
+                request_code_network_times,  # rc_net
+                error_counts,  # ec
+                error_list,  # el
+                counts,  # cts
+                finished_ct, # finished
+                response_success_codes # rsc
+            )
+            p = Process(target=run_client, args=args)
+            p.start()
+            added_processes += 1
+            if user_ct_strlen >= 3:
+                print(f'\rprocesses started:  {added_processes:03d}/{user_ct} ', end='')
+            elif user_ct_strlen == 2:
+                print(f'\rprocesses started:  {added_processes:02d}/{user_ct} ', end='')
+            else:
+                print(f'\rprocesses started:  {added_processes}/{user_ct} ', end='')
+            sleep(0.1)
+        print()
+        while True:
+            sleep(2)
+            finished = finished_ct.get()
+            finished_ct.put(finished)
+            if user_ct_strlen >= 3:
+                print(f'\rprocesses finished: {finished:03d}/{user_ct} ', end='')
+            elif user_ct_strlen == 2:
+                print(f'\rprocesses finished: {finished:02d}/{user_ct} ', end='')
+            else:
+                print(f'\rprocesses finished: {finished}/{user_ct} ', end='')
+            if finished == user_ct:
+                break
+        test_end = time()
+        print()
+        
+        # ----------------------------------------------------------------------------------------------
+        # ---------------------------------------------------------------------------:summary statistics
+        # ----------------------------------------------------------------------------------------------
+
+        request_code_compute_times = request_code_compute_times.get()
+        request_code_network_times = request_code_network_times.get()
+        error_counts = error_counts.get()
+        error_list = error_list.get()
+        response_codes = response_codes.get()
+        response_success_codes = response_success_codes.get()
+        counts = counts.get()
+        time_measure_fail_ct = counts[0]
+        post_failure_ct = counts[1]
+        unique_recieved_error_ct = counts[2]
+        
+        server_compute_times = [item for sublist in request_code_compute_times for item in sublist]
+        network_times = [item for sublist in request_code_network_times for item in sublist]
+        server_compute_times = np.array(server_compute_times)
+        server_compute_times.sort()
+        median_compute = server_compute_times[server_compute_times.shape[0] // 2]
+        mean_compute = server_compute_times.mean()
+        max_compute = server_compute_times.max()
+        min_compute = server_compute_times.min()
+        network_times = np.array(network_times)
+        network_times.sort()
+        median_network = network_times[network_times.shape[0] // 2]
+        mean_network = network_times.mean()
+        max_network = network_times.max()
+        min_network = network_times.min()
+
+        total_time = test_end - test_start
+        print(f'Stress test took {total_time:.2f} seconds with {user_ct} users')
+        print(
+            # f'\nmedian compute time: {median_compute:.05f}\n'
+            f'mean compute time: {mean_compute:.05f}'
+            # f'max compute time: {max_compute:.05f}\n'
+            # f'min compute time: {min_compute:.05f}'
         )
-        p = Process(target=run_client, args=args)
-        p.start()
-        added_processes += 1
-        if user_ct_strlen >= 3:
-            print(f'\rprocesses started:  {added_processes:03d}/{user_ct} ', end='')
-        elif user_ct_strlen == 2:
-            print(f'\rprocesses started:  {added_processes:02d}/{user_ct} ', end='')
-        else:
-            print(f'\rprocesses started:  {added_processes}/{user_ct} ', end='')
-        sleep(3)
-    print()
-    while True:
-        sleep(2)
-        finished = finished_ct.get()
-        finished_ct.put(finished)
-        if user_ct_strlen >= 3:
-            print(f'\rprocesses finished: {finished:03d}/{user_ct} ', end='')
-        elif user_ct_strlen == 2:
-            print(f'\rprocesses finished: {finished:02d}/{user_ct} ', end='')
-        else:
-            print(f'\rprocesses finished: {finished}/{user_ct} ', end='')
-        if finished == user_ct:
-            break
-    test_end = time()
-    print()
-    
-    # ----------------------------------------------------------------------------------------------
-    # ---------------------------------------------------------------------------:summary statistics
-    # ----------------------------------------------------------------------------------------------
+        print(
+            # f'\nmedian network time: {median_network:.05f}\n'
+            f'mean network time: {mean_network:.05f}'
+            # f'max network time: {max_network:.05f}\n'
+            # f'min network time: {min_network:.05f}\n'
+        )
+        mean_local_compute = total_time - mean_compute - mean_network
+        f'mean local compute time: {mean_local_compute:.05f}'
+        mean_compute_times.append(mean_compute)
+        mean_network_times.append(mean_network)
+        mean_local_compute_times.append(mean_local_compute)
+        if i != trial_ct - 1:
+            sleep(30)
 
-    request_code_compute_times = request_code_compute_times.get()
-    request_code_network_times = request_code_network_times.get()
-    error_counts = error_counts.get()
-    error_list = error_list.get()
-    response_codes = response_codes.get()
-    response_success_codes = response_success_codes.get()
-    counts = counts.get()
-    time_measure_fail_ct = counts[0]
-    post_failure_ct = counts[1]
-    unique_recieved_error_ct = counts[2]
-    
-    server_compute_times = [item for sublist in request_code_compute_times for item in sublist]
-    network_times = [item for sublist in request_code_network_times for item in sublist]
-    server_compute_times = np.array(server_compute_times)
-    server_compute_times.sort()
-    median_compute = server_compute_times[server_compute_times.shape[0] // 2]
-    mean_compute = server_compute_times.mean()
-    max_compute = server_compute_times.max()
-    min_compute = server_compute_times.min()
-    network_times = np.array(network_times)
-    network_times.sort()
-    median_network = network_times[network_times.shape[0] // 2]
-    mean_network = network_times.mean()
-    max_network = network_times.max()
-    min_network = network_times.min()
+    # correlations regression: (user ct) ~ (affine transformation of times spent)
+    # sort of like testing each time spent as a function of number of users one at a time,
+    # but here small coefficients mean larger contribution
+    x = DataFrame({
+        'mean server compute time' : mean_compute_times,
+        'mean network time' : mean_network_times,
+        'mean local compute time' : mean_local_compute_times
+    })
+    y = DataFrame({'user count' : user_cts})
+    # going from 0 users to 1 user incurs some constant overhead, so we need an intercept
+    x = add_constant(x)
+    model = OLS(y, x).fit()
+    print(model.summary())
 
-    print(f'Stress test took {test_end - test_start:.1f} seconds')
-    print(
-        f'\nmedian compute time: {median_compute:.05f}\n'
-        f'mean compute time: {mean_compute:.05f}\n'
-        f'max compute time: {max_compute:.05f}\n'
-        f'min compute time: {min_compute:.05f}'
-    )
-    print(
-        f'\nmedian network time: {median_network:.05f}\n'
-        f'mean network time: {mean_network:.05f}\n'
-        f'max network time: {max_network:.05f}\n'
-        f'min network time: {min_network:.05f}\n'
-    )
+    plt.plot(user_cts, mean_compute_times)
+    plt.xlabel('user count')
+    plt.xlim(0, max_user_ct + 1)
+    plt.xticks([i for i in range(max_user_ct + 1)])
+    plt.ylabel('mean compute time')
+    plt.title('Server Compute Time ~ user count')
+    plt.show()
+
+    plt.plot(user_cts, mean_local_compute_times)
+    plt.xlabel('user count')
+    plt.xlim(0, max_user_ct + 1)
+    plt.xticks([i for i in range(max_user_ct + 1)])
+    plt.ylabel('mean local compute time')
+    plt.title('Local Compute Time ~ user count')
+    plt.show()
+
+    plt.plot(user_cts, mean_network_times)
+    plt.xlabel('user count')
+    plt.xlim(0, max_user_ct + 1)
+    plt.xticks([i for i in range(max_user_ct + 1)])
+    plt.ylabel('mean network time')
+    plt.title('Network Time ~ user count')
+    plt.show()
+    
+    return
+
     for error_code in range(1, 22):
         print(f'error {error_code:02d} occurences: {error_counts[error_code]}')
     print(f'Total error count: {sum(error_counts)}')
