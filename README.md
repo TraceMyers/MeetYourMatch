@@ -23,4 +23,6 @@
   <li>command line arguments are detailed above __main__</p>
 </ul>
 
-<p>stresstest.py serves as the example code file. I may eventually create a python-based client script for arbitrary data passing so this repository can be considered more fully-functional. A single instance has undergone tests on a 4-core Ubuntu machine and preliminary results show it can at the very least handle 30 clients sending single packets 5 times per second. Running stresstest.py on a client machine provides summary statistics of performance.</p>
+<p>stresstest.py serves as the example code file. I may eventually create a python-based client script for arbitrary data passing so this repository can be considered more fully-functional.</p>
+
+<p>A single instance has undergone tests on a 4-core Ubuntu machine and preliminary results show it can at the very least handle 30 clients sending single packets 5 times per second. Running stresstest.py on a client machine provides summary statistics of performance.</p>
