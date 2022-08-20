@@ -13,8 +13,9 @@ from random import choice
 from sys import argv
 import numpy as np
 from matplotlib import pyplot as plt
+from multiprocessing import Process, Queue
 
-url = "http://x.x.x.x:x"
+url = "http://154.12.226.174:80"
 headers = CaseInsensitiveDict()
 headers["Accept"] = "application/json"
 headers["Content-Type"] = "application/json"
@@ -41,35 +42,13 @@ def get_user_count_data():
                 ' simulated at 10 updates/sec.'
             )
             exit(1)
-    wait_delta = 1 / (user_ct * 10)
-    return user_ct, wait_delta
+    return user_ct
 
 
-def main():
-    global names
-    global data
-    user_ct, wait_delta = get_user_count_data() 
-    error_counts = [0 for _ in range(22)]
-    request_code_compute_times = [[] for _ in range(7)]
-    request_code_network_times = [[] for _ in range(7)]
-    response_codes = []
-    error_list = []
-    time_measure_failure_ct = 0
-    post_failure_ct = 0
-    unique_recieved_error_ct = 0
-
-    clients = [Client() for _ in range(user_ct)]
-
-    # ----------------------------------------------------------------------------------------------
-    # ------------------------------------------------------------------------------------:test loop
-    # ----------------------------------------------------------------------------------------------
-
-    print("Running test...")
-    test_start = time()
-    step_ct = user_ct * 100
+def run_client(step_ct, client, response_codes, rc_comp, rc_net, error_counts, error_list, counts, finished, wait_delta=0.1):
+    global strings
     for _ in range(step_ct):
         tick_start = time()
-        client = choice(clients)
         request_code = None
         if client.next_post is None:
             client.next_post = f'0,{choice(names)},*,*,*'
@@ -79,17 +58,27 @@ def main():
             total_time = time() - start
             request_code = int(client.next_post[0])
         except:
-            post_failure_ct += 1
-            response_codes.append(-2)
+            cts = counts.get()
+            cts[1] += 1
+            counts.put(cts)
+            rc = response_codes.get()
+            rc.append(-2)
+            response_codes.put_nowait(rc)
             continue
         try:
             get_resp = requests.get(url, headers=headers)
             server_compute_time = float(get_resp.text)
             network_time = total_time - server_compute_time
-            request_code_compute_times[request_code].append(server_compute_time)
-            request_code_network_times[request_code].append(network_time)
+            response_code_compute_time = rc_comp.get()
+            response_code_network_time = rc_net.get()
+            response_code_compute_time[request_code].append(server_compute_time)
+            response_code_network_time[request_code].append(network_time)
+            rc_comp.put(response_code_compute_time)
+            rc_net.put(response_code_network_time)
         except:
-            time_measure_failure_ct += 1
+            cts = counts.get()
+            cts[0] += 1
+            counts.put(cts)
 
         client.prev_server_reply = post_resp.text
         data = post_resp.text.split('/')
@@ -104,7 +93,7 @@ def main():
         if server_op_success:
             if server_op_extra_code in (9, 10):
                 client.state += 1
-                client.next_post = f'6,{choice(data)},{client.session_key},{client.pair_key},{client.state}'
+                client.next_post = f'6,{choice(strings)},{client.session_key},{client.pair_key},{client.state}'
             elif server_op_extra_code == 0:
                 client.pair_key = server_op_return_data
                 client.next_post = f'2,*,{client.pair_key},*,*'
@@ -120,31 +109,104 @@ def main():
                 game_keys = server_op_return_data.split('|')
                 client.session_key = game_keys[0]
                 client.pair_key = game_keys[1]
-                client.next_post = f'6,{choice(data)},{client.session_key},{client.pair_key},0'
+                client.next_post = f'6,{choice(strings)},{client.session_key},{client.pair_key},0'
         else:
             if not client.has_recieved_error:
                 client.has_recieved_error = True
-                unique_recieved_error_ct += 1
+                cts = counts.get()
+                cts[2] += 1
+                counts.put(cts)
             client.next_post = f'0,{choice(names)},*,*,*'
-            error_counts[server_op_code] += 1
-            error_list.append(server_op_code)
-        response_codes.append(server_op_code)
+            ec = error_counts.get()
+            ec[server_op_code] += 1
+            error_counts.put(ec)
+            el = error_list.get()
+            el.append(server_op_code)
+            error_list.put(el)
+        rc = response_codes.get()
+        rc.append(server_op_code)
+        response_codes.put(rc)
 
         tick_end = time()
         tick_time_passed = tick_end - tick_start
         wait_time = wait_delta - tick_time_passed
         if wait_time > 0:
             sleep(wait_time)
+    f = finished.get()
+    f[0] += 1
+    finished.put(f)
+    return
 
+
+def main():
+    global names
+    global data
+    user_ct = get_user_count_data() 
+    error_counts = Queue()
+    error_counts.put([0 for _ in range(22)])
+    request_code_compute_times = Queue()
+    request_code_compute_times.put([[] for _ in range(7)])
+    request_code_network_times = Queue()
+    request_code_network_times.put([[] for _ in range(7)])
+    response_codes = Queue()
+    response_codes.put([])
+    error_list = Queue()
+    error_list.put([])
+    # time_measure_failure_ct = 0
+    # post_failure_ct = 0
+    # unique_recieved_error_ct = 0
+    counts = Queue()
+    counts.put([0, 0, 0])
+    finished_ct = Queue()
+    finished_ct.put([0])
+    clients = [Client() for _ in range(user_ct)]
+
+    # ----------------------------------------------------------------------------------------------
+    # ------------------------------------------------------------------------------------:test loop
+    # ----------------------------------------------------------------------------------------------
+
+    print("Running test...")
+    step_ct = 100
+    test_start = time()
+    for client in clients:
+        args = (
+            step_ct, 
+            client, 
+            response_codes, 
+            request_code_compute_times, 
+            request_code_network_times, 
+            error_counts, 
+            error_list, 
+            counts, 
+            finished_ct
+        )
+        p = Process(target=run_client, args=args)
+        p.start()
+    while True:
+        sleep(1)
+        finished = finished_ct.get()
+        print(finished)
+        finished_ct.put(finished)
+        if finished[0] == user_ct:
+            break
     test_end = time()
-
+    
     # ----------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------:summary statistics
     # ----------------------------------------------------------------------------------------------
 
+    request_code_compute_times = request_code_compute_times.get()
+    request_code_network_times = request_code_network_times.get()
+    error_counts = error_counts.get()
+    error_list = error_list.get()
+    response_codes = response_codes.get()
+    counts = counts.get()
+    time_measure_fail_ct = counts[0]
+    post_failure_ct = counts[1]
+    unique_recieved_error_ct = counts[2]
+    
     server_compute_times = [item for sublist in request_code_compute_times for item in sublist]
     network_times = [item for sublist in request_code_network_times for item in sublist]
-    network_times.append(network_time)
     server_compute_times = np.array(server_compute_times)
     server_compute_times.sort()
     median_compute = server_compute_times[server_compute_times.shape[0] // 2]
@@ -258,7 +320,7 @@ names = [
     'smash mouth',
     'beck'
 ]
-data = [
+strings = [
     'wish you were here',
     'time flies',
     'texting sucks',
@@ -266,12 +328,6 @@ data = [
     'tippy tappy dippy dappy',
     'dang yall',
     'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
-        'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
-        'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
-        'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
-        'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
-        'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
-        'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
         'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
         'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
         'goobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobersgoobers' \
@@ -303,47 +359,26 @@ data = [
         'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
         'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
         'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
-        'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
-        'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
-        'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
-        'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
-        'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
-        'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
-        'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
-        'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
-        'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ' \
         'i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! i\'d buy that for a dollar! ',
-    'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' \
-        'Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. Frankly, my dear, I don\'t give a damn. ' 
+    'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' \
+        'Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. Frankly my dear I don\'t give a damn. ' 
 ]
 
 

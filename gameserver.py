@@ -31,6 +31,7 @@ from time import time
 
 #TODO: to be put into production, must stop spam from IP's
 #TODO: to be put into production, needs a good hash generator for keys
+#TODO: put data field at the end so it can have commas
 
 MAX_CONTENT_LEN = 16384
 MAX_CACHE_LEN = 131072
