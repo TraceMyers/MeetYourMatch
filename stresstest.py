@@ -6,6 +6,7 @@ multi-headed, for a few reasons. But, it appears to verify that the server handl
 well.
 """
 
+from tkinter import W
 import requests
 from requests.structures import CaseInsensitiveDict
 from time import sleep, time
@@ -22,6 +23,7 @@ headers["Content-Type"] = "application/json"
 
 
 class Client:
+
     def __init__(self):
         self.pair_key = None
         self.session_key = None
@@ -30,9 +32,20 @@ class Client:
         self.has_recieved_error = False
         self.state = 0
 
+    def __repr__(self):
+        return (
+            f'player\n' \
+            f'pair_key: {self.pair_key}\n' \
+            f'session_key: {self.session_key}\n' \
+            f'prev_server_reply: {self.prev_server_reply}\n' \
+            f'next_post: {self.next_post}\n' \
+            f'has_recieved_error: {self.has_recieved_error}\n' \
+            f'state: {self.state}' 
+        )
+
 
 def get_user_count_data():
-    user_ct = 10
+    user_ct = 20
     if len(argv) > 1:
         try:
             user_ct = int(argv[1])
@@ -45,9 +58,20 @@ def get_user_count_data():
     return user_ct
 
 
-def run_client(step_ct, client, response_codes, rc_comp, rc_net, error_counts, error_list, counts, finished, wait_delta=0.1):
+def run_client(pnum, step_ct, client, response_codes, rc_comp, rc_net, error_counts, error_list, counts, finished, wait=0.2):
     global strings
-    for _ in range(step_ct):
+    global names
+    
+    error_counts_buf = [0 for _ in range(22)]
+    rcct_buf = [[] for _ in range(7)]
+    rcnt_buf = [[] for _ in range(7)]
+    response_codes_buf = [-2 for _ in range(100)]
+    error_list_buf = []
+    counts_buf = [0, 0, 0]
+    buf_ctr = 0
+
+    step_ct_m1 = step_ct - 1
+    for step in range(step_ct):
         tick_start = time()
         request_code = None
         if client.next_post is None:
@@ -58,37 +82,24 @@ def run_client(step_ct, client, response_codes, rc_comp, rc_net, error_counts, e
             total_time = time() - start
             request_code = int(client.next_post[0])
         except:
-            cts = counts.get()
-            cts[1] += 1
-            counts.put(cts)
-            rc = response_codes.get()
-            rc.append(-2)
-            response_codes.put_nowait(rc)
+            counts_buf[1] += 1
             continue
         try:
             get_resp = requests.get(url, headers=headers)
             server_compute_time = float(get_resp.text)
             network_time = total_time - server_compute_time
-            response_code_compute_time = rc_comp.get()
-            response_code_network_time = rc_net.get()
-            response_code_compute_time[request_code].append(server_compute_time)
-            response_code_network_time[request_code].append(network_time)
-            rc_comp.put(response_code_compute_time)
-            rc_net.put(response_code_network_time)
+            rcct_buf[request_code].append(server_compute_time)
+            rcnt_buf[request_code].append(network_time)
         except:
-            cts = counts.get()
-            cts[0] += 1
-            counts.put(cts)
+            counts_buf[0] += 1
 
-        client.prev_server_reply = post_resp.text
         data = post_resp.text.split('/')
         server_op_code = int(data[0])
         server_op_success = server_op_code == 0
-        server_op_extra_code = None
-        try:
+        if data[1].isnumeric(): 
             server_op_extra_code = int(data[1])
-        except:
-            pass
+        else:
+            server_op_extra_code = None
         server_op_return_data = data[2]
         if server_op_success:
             if server_op_extra_code in (9, 10):
@@ -111,29 +122,71 @@ def run_client(step_ct, client, response_codes, rc_comp, rc_net, error_counts, e
                 client.pair_key = game_keys[1]
                 client.next_post = f'6,{choice(strings)},{client.session_key},{client.pair_key},0'
         else:
+            if server_op_code == 5:
+                print(client)
             if not client.has_recieved_error:
                 client.has_recieved_error = True
-                cts = counts.get()
-                cts[2] += 1
-                counts.put(cts)
+                counts_buf[2] += 1
             client.next_post = f'0,{choice(names)},*,*,*'
-            ec = error_counts.get()
-            ec[server_op_code] += 1
-            error_counts.put(ec)
-            el = error_list.get()
-            el.append(server_op_code)
-            error_list.put(el)
-        rc = response_codes.get()
-        rc.append(server_op_code)
-        response_codes.put(rc)
+            client.state = 0
+            client.session_key = None
+            client.pair_key = None
+            error_counts_buf[server_op_code] += 1
+            error_list_buf.append(server_op_code)
+        response_codes_buf[buf_ctr] = server_op_code
+
+        client.prev_server_reply = post_resp.text
 
         tick_end = time()
         tick_time_passed = tick_end - tick_start
-        wait_time = wait_delta - tick_time_passed
+        wait_time = wait - tick_time_passed
         if wait_time > 0:
             sleep(wait_time)
+
+        buf_ctr += 1
+        if buf_ctr == 100 or step == step_ct_m1:
+            buf_ctr = 0
+
+            cts = counts.get()
+            cts[0] += counts_buf[0]
+            cts[1] += counts_buf[1]
+            cts[2] += counts_buf[2]
+            counts.put(cts)
+
+            rc = response_codes.get()
+            rc.extend(response_codes_buf)
+            response_codes.put(rc)
+
+            response_code_compute_time = rc_comp.get()
+            for i in range(7):
+                response_code_compute_time[i].extend(rcct_buf[i])
+            rc_comp.put(response_code_compute_time)
+
+            response_code_network_time = rc_net.get()
+            for i in range(7):
+                response_code_network_time[i].extend(rcnt_buf[i])
+            rc_net.put(response_code_network_time)
+
+            ec = error_counts.get()
+            for i in range(22):
+                ec[i] += error_counts_buf[i]
+            error_counts.put(ec)
+
+            el = error_list.get()
+            el.extend(error_list_buf)
+            error_list.put(el)
+
+            counts_buf[0] = 0
+            counts_buf[1] = 0
+            counts_buf[2] = 0
+            response_codes_buf = [-2 for _ in range(100)]
+            rcct_buf = [[] for _ in range(7)]
+            rcnt_buf = [[] for _ in range(7)]
+            error_counts_buf = [0 for _ in range(22)]
+            error_list_buf.clear()
+
     f = finished.get()
-    f[0] += 1
+    f += 1
     finished.put(f)
     return
 
@@ -158,7 +211,7 @@ def main():
     counts = Queue()
     counts.put([0, 0, 0])
     finished_ct = Queue()
-    finished_ct.put([0])
+    finished_ct.put(0)
     clients = [Client() for _ in range(user_ct)]
 
     # ----------------------------------------------------------------------------------------------
@@ -166,10 +219,13 @@ def main():
     # ----------------------------------------------------------------------------------------------
 
     print("Running test...")
-    step_ct = 100
+    step_ct = 1000
     test_start = time()
-    for client in clients:
+    added_processes = 0
+    for i in range(len(clients)):
+        client = clients[i]
         args = (
+            i,
             step_ct, 
             client, 
             response_codes, 
@@ -182,14 +238,19 @@ def main():
         )
         p = Process(target=run_client, args=args)
         p.start()
+        added_processes += 1
+        # print(f'\rprocesses started: {added_processes:03d}/{user_ct} ', end='')
+        sleep(3)
+    print()
     while True:
-        sleep(1)
+        sleep(2)
         finished = finished_ct.get()
-        print(finished)
         finished_ct.put(finished)
-        if finished[0] == user_ct:
+        # print(f'\rprocesses finished: {finished:03d}/{user_ct} ', end='')
+        if finished == user_ct:
             break
     test_end = time()
+    print()
     
     # ----------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------:summary statistics

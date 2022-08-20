@@ -36,11 +36,11 @@ from time import time
 MAX_CONTENT_LEN = 16384
 MAX_CACHE_LEN = 131072
 
-PAIRING_MAX_KEYS = 1000
+PAIRING_MAX_KEYS = 200 # should always be >= GAME_MAX_KEYS
 pairing_registry = [None for i in range(PAIRING_MAX_KEYS)]
 pairing_key_assign_ctr = 0
 
-GAME_MAX_KEYS = 500
+GAME_MAX_KEYS = 100
 game_registry = [None for i in range(GAME_MAX_KEYS)]
 game_key_assign_ctr = 0
 game_msg_table = [[[-1, None, 0], [-1, None, 0]] for i in range(GAME_MAX_KEYS)]
@@ -184,12 +184,12 @@ class Game:
             for item in self.data[i]:
                 item_len = len(item)
                 joined_len = item_len + chars_added[i]
-                if joined_len < 20:
+                if joined_len < 40:
                     chars_added[i] = joined_len
                     str_data[i] += item
                 else:
                     remain = 20 - chars_added[i]
-                    str_data[i] += item[:remain] + ", ..."
+                    str_data[i] += item[:remain] + ", ... "
                     break
                 str_data[i] += ", "
                 chars_added[i] += 2
@@ -349,7 +349,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
                 return False, ERROR_POST_DATA_FORMAT_3
         elif self.notify_type < NOTIFY_GAME_QUIT:
             self.key = int(_key)
-            if (self.key < 0 or self.key >= pairing_key_assign_ctr) \
+            if (self.key < 0 or self.key >= PAIRING_MAX_KEYS) \
             or pairing_registry[self.key] is None:
                 return False, ERROR_NOT_REGISTERED
             self.player = pairing_registry[self.key]
@@ -635,7 +635,7 @@ ERRNAME_BAD_ARGNAME = """
 ------------
 __main__(): ERROR: malformed arg name
 example(1): python webserver.py 
-(creates an http server that listens on port 8000 by default)
+(creates an http server that listens on port 80 by default)
 example(2): python3 webserver.py --help
 (see valid arguments)
 ------------
