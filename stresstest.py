@@ -16,7 +16,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from multiprocessing import Process, Queue
 
-url = "http://154.12.226.174:80"
+url = "http://x.x.x.x:x"
 headers = CaseInsensitiveDict()
 headers["Accept"] = "application/json"
 headers["Content-Type"] = "application/json"
