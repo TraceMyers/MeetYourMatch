@@ -7,7 +7,7 @@
 <p> I may eventually create a client executable for arbitrary data passing so this repository can be considered something resembling fully-functional software.</p>
 <h2>How to use</h2>
 <ul>
-  <li><p>Clients send http POST requests to the server's public IP + whatever port is specified at startup (or default port is 80). The requests are simple text formatted like so:<blockquote>[incoming symbol],[formatted data],[game/pairing key],[player key],[game received switch]</blockquote></p>
+  <li><p>Clients send http POST requests to the server's public IP + whatever port is specified at startup. The requests are simple text formatted like so:<blockquote>[incoming symbol],[formatted data],[game/pairing key],[player key],[game received switch]</blockquote></p>
     <ul>
       <li>[incoming symbol]: Tells the server what the client wants, and what kind of formatted data to expect. All of these symbols can be found under the comment reading "incoming symbols"</li>
        <li>[formatted data]: Game data related to the incoming symbol, or nothing. If the incoming symbol is NOTIFY_REGISTER, the data will be a user name. If the incoming symbol is NOTIFY_GAME_UPDATE, the data will be game data. Otherwise, this field is unused.</li>
