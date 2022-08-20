@@ -636,7 +636,7 @@ ERRNAME_BAD_ARGNAME = """
 ------------
 __main__(): ERROR: malformed arg name
 example(1): python webserver.py 
-(creates an http server that listens on port 80 by default)
+(creates an http server that listens on port 8192 by default)
 example(2): python3 webserver.py --help
 (see valid arguments)
 ------------
@@ -655,7 +655,7 @@ if __name__ == '__main__':
         pass # overwriting previous log file
 
     # -- default args --
-    port = 80
+    port = 8192
     verbose = False
 
     arg_ct = len(argv)

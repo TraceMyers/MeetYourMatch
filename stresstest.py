@@ -45,7 +45,7 @@ class Client:
 
 
 def get_user_count_data():
-    user_ct = 50
+    user_ct = 30
     if len(argv) > 1:
         try:
             user_ct = int(argv[1])
@@ -62,12 +62,12 @@ def run_client(
     pnum, 
     step_ct, 
     client, 
-    response_codes, 
+    rc, 
     rc_comp, 
     rc_net, 
-    error_counts, 
-    error_list, 
-    counts, 
+    ec, 
+    el, 
+    cts, 
     finished, 
     rsc,
     wait=0.2
@@ -75,13 +75,14 @@ def run_client(
     global strings
     global names
     
-    error_counts_buf = [0 for _ in range(22)]
-    rcct_buf = [[] for _ in range(7)]
-    rcnt_buf = [[] for _ in range(7)]
-    response_codes_buf = [-2 for _ in range(100)]
-    rsc_buf = [-2 for _ in range(100)]
-    error_list_buf = []
-    counts_buf = [0, 0, 0]
+    BUFSIZE = 100
+    ec_buf = [0 for _ in range(22)]
+    rc_comp_buf = [[] for _ in range(7)]
+    rc_net_buf = [[] for _ in range(7)]
+    rc_buf = [-2 for _ in range(BUFSIZE)]
+    rsc_buf = [-2 for _ in range(BUFSIZE)]
+    el_buf = [-2 for _ in range(BUFSIZE)]
+    cts_buf = [0, 0, 0]
     buf_ctr = 0
 
     step_ct_m1 = step_ct - 1
@@ -96,16 +97,17 @@ def run_client(
             total_time = time() - start
             request_code = int(client.next_post[0])
         except:
-            counts_buf[1] += 1
+            cts_buf[1] += 1
             continue
         try:
             get_resp = requests.get(url, headers=headers)
+            # these times are sometimes not accurate due to async, but are still helpful
             server_compute_time = float(get_resp.text)
             network_time = total_time - server_compute_time
-            rcct_buf[request_code].append(server_compute_time)
-            rcnt_buf[request_code].append(network_time)
+            rc_comp_buf[request_code].append(server_compute_time)
+            rc_net_buf[request_code].append(network_time)
         except:
-            counts_buf[0] += 1
+            cts_buf[0] += 1
 
         data = post_resp.text.split('/')
         server_op_code = int(data[0])
@@ -141,14 +143,14 @@ def run_client(
         else:
             if not client.has_recieved_error:
                 client.has_recieved_error = True
-                counts_buf[2] += 1
+                cts_buf[2] += 1
             client.next_post = f'0,{choice(names)},*,*,*'
             client.state = 0
             client.session_key = None
             client.pair_key = None
-            error_counts_buf[server_op_code] += 1
-            error_list_buf.append(server_op_code)
-        response_codes_buf[buf_ctr] = server_op_code
+            ec_buf[server_op_code] += 1
+            el_buf[buf_ctr] = server_op_code
+        rc_buf[buf_ctr] = server_op_code
 
         client.prev_server_reply = post_resp.text
 
@@ -159,51 +161,51 @@ def run_client(
             sleep(wait_time)
 
         buf_ctr += 1
-        if buf_ctr == 100 or step == step_ct_m1:
+        if buf_ctr == BUFSIZE or step == step_ct_m1:
             buf_ctr = 0
 
-            cts = counts.get()
-            cts[0] += counts_buf[0]
-            cts[1] += counts_buf[1]
-            cts[2] += counts_buf[2]
-            counts.put(cts)
+            counts = cts.get()
+            counts[0] += cts_buf[0]
+            counts[1] += cts_buf[1]
+            counts[2] += cts_buf[2]
+            cts.put(counts)
 
-            rc = response_codes.get()
-            rc.extend(response_codes_buf)
-            response_codes.put(rc)
+            response_codes = rc.get()
+            response_codes.extend(rc_buf)
+            rc.put(response_codes)
 
-            r_success = rsc.get()
-            r_success.extend(rsc_buf)
-            rsc.put(r_success)
+            response_success_codes = rsc.get()
+            response_success_codes.extend(rsc_buf)
+            rsc.put(response_success_codes)
 
             response_code_compute_time = rc_comp.get()
             for i in range(7):
-                response_code_compute_time[i].extend(rcct_buf[i])
+                response_code_compute_time[i].extend(rc_comp_buf[i])
             rc_comp.put(response_code_compute_time)
 
             response_code_network_time = rc_net.get()
             for i in range(7):
-                response_code_network_time[i].extend(rcnt_buf[i])
+                response_code_network_time[i].extend(rc_net_buf[i])
             rc_net.put(response_code_network_time)
 
-            ec = error_counts.get()
+            error_counts = ec.get()
             for i in range(22):
-                ec[i] += error_counts_buf[i]
-            error_counts.put(ec)
+                error_counts[i] += ec_buf[i]
+            ec.put(error_counts)
 
-            el = error_list.get()
-            el.extend(error_list_buf)
-            error_list.put(el)
+            error_list = el.get()
+            error_list.extend(el_buf)
+            el.put(error_list)
 
-            counts_buf[0] = 0
-            counts_buf[1] = 0
-            counts_buf[2] = 0
-            response_codes_buf = [-2 for _ in range(100)]
-            rsc_buf = [-2 for _ in range(100)]
-            rcct_buf = [[] for _ in range(7)]
-            rcnt_buf = [[] for _ in range(7)]
-            error_counts_buf = [0 for _ in range(22)]
-            error_list_buf.clear()
+            cts_buf[0] = 0
+            cts_buf[1] = 0
+            cts_buf[2] = 0
+            rc_buf = [-2 for _ in range(BUFSIZE)]
+            rsc_buf = [-2 for _ in range(BUFSIZE)]
+            rc_comp_buf = [[] for _ in range(7)]
+            rc_net_buf = [[] for _ in range(7)]
+            ec_buf = [0 for _ in range(22)]
+            el_buf = [-2 for _ in range(BUFSIZE)]
 
     f = finished.get()
     f += 1
@@ -244,18 +246,19 @@ def main():
     user_ct_strlen = len(str(user_ct))
     for i in range(len(clients)):
         client = clients[i]
+    
         args = (
-            i,
-            step_ct, 
-            client, 
-            response_codes, 
-            request_code_compute_times, 
-            request_code_network_times, 
-            error_counts, 
-            error_list, 
-            counts, 
-            response_success_codes,
-            finished_ct,
+            i, # pnum
+            step_ct,  # step_ct
+            client,  # client
+            response_codes,  # rc
+            request_code_compute_times,  # rc_comp
+            request_code_network_times,  # rc_net
+            error_counts,  # ec
+            error_list,  # el
+            counts,  # cts
+            finished_ct, # finished
+            response_success_codes # rsc
         )
         p = Process(target=run_client, args=args)
         p.start()
@@ -359,7 +362,7 @@ def main():
     plt.title('Server Op Codes Over Time')
     plt.show()
 
-    plt.plot([i for i in range(len(response_success_codes))], response_codes, '.')
+    plt.plot([i for i in range(len(response_success_codes))], response_success_codes, '.')
     plt.xlabel('time step')
     plt.ylabel('code')
     plt.ylim(0, 12)
