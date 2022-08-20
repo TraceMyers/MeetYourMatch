@@ -177,21 +177,30 @@ class Game:
         p0_updated = 'yes' if self.updated[0] else 'no'
         p1 = self.players[1]
         p1_updated = 'yes' if self.updated[1] else 'no'
-        if len(self.data[0]) > 20:
-            data_0 = self.data[0][:18] + '...'
-        else:
-            data_0 = self.data[0]
-        if len(self.data[1]) > 20:
-            data_1 = self.data[1][:18] + '...'
-        else:
-            data_1 = self.data[1]
+
+        str_data = ['[', '[']
+        chars_added = [0, 0]
+        for i in range(2):
+            for item in self.data[i]:
+                item_len = len(item)
+                joined_len = item_len + chars_added[i]
+                if joined_len < 20:
+                    chars_added[i] = joined_len
+                    str_data[i] += item
+                else:
+                    remain = 20 - chars_added[i]
+                    str_data[i] += item[:remain] + ", ..."
+                str_data[i] += ", "
+                chars_added[i] += 2
+            str_data[i] += ']'
+
         return (
             f'P0: {p0.name} / {p0.address} / {p0._role()} / state={self.player_state[0]}'
             f' / updated={p0_updated}\n'
-            f'data="{data_0}"\n'
+            f'data="{str_data[0]}"\n'
             f'P1: {p1.name} / {p1.address} / {p1._role()} / state={self.player_state[1]}'
             f' / updated={p1_updated}\n'
-            f'data="{data_1}"'
+            f'data="{str_data[1]}"'
         )
 
 
