@@ -190,6 +190,7 @@ class Game:
                 else:
                     remain = 20 - chars_added[i]
                     str_data[i] += item[:remain] + ", ..."
+                    break
                 str_data[i] += ", "
                 chars_added[i] += 2
             str_data[i] += ']'
