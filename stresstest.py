@@ -1,9 +1,9 @@
 """
 An admittedly imperfect stress test for my TURN server. Registers n users and tries to update
-them on average 10 times per second. On my computer, it does a very bad job at emulating an 
-idealized version of this scenario after ~50 clients. A better test would be multithreaded or
-multi-headed, for a few reasons. But, it appears to verify that the server handles multiple clients
-well.
+them on average 5 times per second.
+
+Also functions as example code for how to interact with the server. May update in the future to
+provide a simple python-based client with less exposure.
 """
 
 import requests
@@ -58,7 +58,20 @@ def get_user_count_data():
     return user_ct
 
 
-def run_client(pnum, step_ct, client, response_codes, rc_comp, rc_net, error_counts, error_list, counts, finished, wait=0.2):
+def run_client(
+    pnum, 
+    step_ct, 
+    client, 
+    response_codes, 
+    rc_comp, 
+    rc_net, 
+    error_counts, 
+    error_list, 
+    counts, 
+    finished, 
+    rsc,
+    wait=0.2
+):
     global strings
     global names
     
@@ -66,6 +79,7 @@ def run_client(pnum, step_ct, client, response_codes, rc_comp, rc_net, error_cou
     rcct_buf = [[] for _ in range(7)]
     rcnt_buf = [[] for _ in range(7)]
     response_codes_buf = [-2 for _ in range(100)]
+    rsc_buf = [-2 for _ in range(100)]
     error_list_buf = []
     counts_buf = [0, 0, 0]
     buf_ctr = 0
@@ -102,8 +116,11 @@ def run_client(pnum, step_ct, client, response_codes, rc_comp, rc_net, error_cou
             server_op_extra_code = None
         server_op_return_data = data[2]
         if server_op_success:
+            rsc_buf[buf_ctr] = server_op_extra_code
             if server_op_extra_code in (9, 10):
                 client.state += 1
+                client.next_post = f'6,{choice(strings)},{client.session_key},{client.pair_key},{client.state}'
+            elif server_op_extra_code == 11:
                 client.next_post = f'6,{choice(strings)},{client.session_key},{client.pair_key},{client.state}'
             elif server_op_extra_code == 0:
                 client.pair_key = server_op_return_data
@@ -155,6 +172,10 @@ def run_client(pnum, step_ct, client, response_codes, rc_comp, rc_net, error_cou
             rc.extend(response_codes_buf)
             response_codes.put(rc)
 
+            r_success = rsc.get()
+            r_success.extend(rsc_buf)
+            rsc.put(r_success)
+
             response_code_compute_time = rc_comp.get()
             for i in range(7):
                 response_code_compute_time[i].extend(rcct_buf[i])
@@ -178,6 +199,7 @@ def run_client(pnum, step_ct, client, response_codes, rc_comp, rc_net, error_cou
             counts_buf[1] = 0
             counts_buf[2] = 0
             response_codes_buf = [-2 for _ in range(100)]
+            rsc_buf = [-2 for _ in range(100)]
             rcct_buf = [[] for _ in range(7)]
             rcnt_buf = [[] for _ in range(7)]
             error_counts_buf = [0 for _ in range(22)]
@@ -201,11 +223,10 @@ def main():
     request_code_network_times.put([[] for _ in range(7)])
     response_codes = Queue()
     response_codes.put([])
+    response_success_codes = Queue()
+    response_success_codes.put([])
     error_list = Queue()
     error_list.put([])
-    # time_measure_failure_ct = 0
-    # post_failure_ct = 0
-    # unique_recieved_error_ct = 0
     counts = Queue()
     counts.put([0, 0, 0])
     finished_ct = Queue()
@@ -233,7 +254,8 @@ def main():
             error_counts, 
             error_list, 
             counts, 
-            finished_ct
+            response_success_codes,
+            finished_ct,
         )
         p = Process(target=run_client, args=args)
         p.start()
@@ -270,6 +292,7 @@ def main():
     error_counts = error_counts.get()
     error_list = error_list.get()
     response_codes = response_codes.get()
+    response_success_codes = response_success_codes.get()
     counts = counts.get()
     time_measure_fail_ct = counts[0]
     post_failure_ct = counts[1]
@@ -334,6 +357,14 @@ def main():
     plt.ylim(-2, 22)
     plt.yticks([i for i in range(-2, 22)])
     plt.title('Server Op Codes Over Time')
+    plt.show()
+
+    plt.plot([i for i in range(len(response_success_codes))], response_codes, '.')
+    plt.xlabel('time step')
+    plt.ylabel('code')
+    plt.ylim(0, 12)
+    plt.yticks([i for i in range(0, 12)])
+    plt.title('Server Success Codes Over Time')
     plt.show()
 
     mean_request_code_compute_times = [np.mean(item) if len(item) > 0 else 0 for item in request_code_compute_times]

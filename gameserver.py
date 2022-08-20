@@ -96,6 +96,7 @@ C_MSG_PARTNER_LOAD =    "0/7/*"
 C_MSG_START_PLAY =      "0/8/"
 C_MSG_GAME_DATA =       "0/9/"
 C_MSG_GAME_NO_DATA =    "0/10/*"
+C_MSG_GAME_REDUNDANT =  "0/11/*"
 
 ERROR_BAD_CONTENT_LEN =     "1/*/*"
 ERROR_NO_POST_DATA =        "2/*/*"
@@ -535,7 +536,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
 
         if len(combined_data) <= MAX_CACHE_LEN:
             game_msg_table[self.key][self.player_key][1] = combined_data
-            return f'{C_MSG_GAME_DATA}{combined_data}'
+            return f'{C_MSG_GAME_REDUNDANT}{combined_data}'
         else:
             return f'{ERROR_GAME_CACHE_MAXED}{old_data}'
 
