@@ -3,7 +3,9 @@
 <p>A simple HTTP TURN server used to demo my game's 2 player multiplayer.  </p>
 
 <p>The server handles matchmaking on a first-come-first-serve basis, or between two specific clients. Once clients are paired, this server relays data between the clients. This will not easily work with game engine net code since it's meant for simple text transfer. A game like mine which transfers very little data and doesn't require frequent communication will be a good fit.</p>
-<p>How to use:</p>
+<p>stresstest.py serves as the example code file. Running stresstest.py on a client machine provides summary statistics of performance. A single instance or the server has undergone tests on a 4-core Ubuntu machine and preliminary results show it can (at the very least) handle 30 clients sending single TCP packets 5 times per second. A distributed test will be necessary to better determine maximum load.</p>
+<p> I may eventually create a client executable for arbitrary data passing so this repository can be considered something resembling fully-functional software.</p>
+<h2>How to use</h2>
 <ul>
   <li><p>Clients send http POST requests to the server's public IP + whatever port is specified at startup (or default port is 80). The requests are simple text formatted like so:<blockquote>[incoming symbol],[formatted data],[game/pairing key],[player key],[game received switch]</blockquote></p>
     <ul>
@@ -22,5 +24,4 @@
   <li>All formatted data going forward will be game data. The format is determined on the client end, because the server only passes the data along.</li>
   <li>command line arguments are detailed above __main__</p>
 </ul>
-<p>stresstest.py serves as the example code file. Running stresstest.py on a client machine provides summary statistics of performance. A single instance or the server has undergone tests on a 4-core Ubuntu machine and preliminary results show it can (at the very least) handle 30 clients sending single TCP packets 5 times per second. A distributed test will be necessary to better determine maximum load.</p>
-<p> I may eventually create a python-based client script for arbitrary data passing so this repository can be considered something resembling fully-functional software.</p>
+
