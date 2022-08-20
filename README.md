@@ -1,6 +1,6 @@
 # Mobile Word Game Turn Server
 
-<p>A simple HTTP TURN server used to demo my game's 2 player multiplayer. Can handle an undetermined number of clients, but the maximum number of pairing players, as well as the maximum number of games, is defaulted to 100 each, giving a maximum total of 300 players tracked in the system. Testing is needed to verify how much it can handle.</p>
+<p>A simple HTTP TURN server used to demo my game's 2 player multiplayer.  </p>
 
 <p>The server handles matchmaking on a first-come-first-serve basis, or between two specific clients. Once clients are paired, this server relays data between the clients. This will not easily work with game engine net code since it's meant for simple text transfer. A game like mine which transfers very little data and doesn't require frequent communication will be a good fit.</p>
 <p>How to use:</p>
@@ -22,3 +22,5 @@
   <li>All formatted data going forward will be game data. The format is determined on the client end, because the server only passes the data along.</li>
   <li>command line arguments are detailed above __main__</p>
 </ul>
+
+<p>stresstest.py serves as the example code file. I may eventually create a python-based client script for arbitrary data passing so this repository can be considered more fully-functional. A single instance has undergone tests on a 4-core Ubuntu machine and preliminary results show it can at the very least handle 30 clients sending single packets 5 times per second. Running stresstest.py on a client machine provides summary statistics of performance.</p>
