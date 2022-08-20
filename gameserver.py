@@ -176,13 +176,21 @@ class Game:
         p0_updated = 'yes' if self.updated[0] else 'no'
         p1 = self.players[1]
         p1_updated = 'yes' if self.updated[1] else 'no'
+        if len(self.data[0]) > 20:
+            data_0 = self.data[0][:18] + '...'
+        else:
+            data_0 = self.data[0]
+        if len(self.data[1]) > 20:
+            data_1 = self.data[1][:18] + '...'
+        else:
+            data_1 = self.data[1]
         return (
             f'P0: {p0.name} / {p0.address} / {p0._role()} / state={self.player_state[0]}'
             f' / updated={p0_updated}\n'
-            f'data="{self.data[0]}"\n'
+            f'data="{data_0}"\n'
             f'P1: {p1.name} / {p1.address} / {p1._role()} / state={self.player_state[1]}'
             f' / updated={p1_updated}\n'
-            f'data="{self.data[1]}"'
+            f'data="{data_1}"'
         )
 
 
