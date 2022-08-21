@@ -47,5 +47,5 @@ server_loc = (url, port)
 
 udp_client_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
 udp_client_socket.sendto(k, server_loc)
-# server_msg = udp_client_socket.recvfrom(buffer_size)
-# print(server_msg)
+server_msg = udp_client_socket.recvfrom(buffer_size)
+print(server_msg)
