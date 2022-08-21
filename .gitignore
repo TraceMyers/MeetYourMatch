@@ -1,3 +1,5 @@
 webserver.py
 log.txt
 url.txt
+secret_key.txt
+scratch.py

@@ -16,6 +16,8 @@ from datetime import datetime
 from threading import Timer
 from sys import argv
 from time import time
+from multiprocessing import Process, Queue
+import socket
 
 #---------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------:init vars
@@ -26,6 +28,7 @@ from time import time
 #TODO: to be put into production, needs a good hash generator for keys
 #TODO: put data field at the end so it can have commas
 #TODO: some drops don't save partner names to bad_partner_names
+#TODO: track down all cases of the same pointers being dereferenced twice unnecesarily, etc.
 
 MAX_CONTENT_LEN = 16384
 MAX_CACHE_LEN = 131072
@@ -255,7 +258,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             log(f"{dt}\nERROR: over content length")
             self._set_response(400)
             self.wfile.write(ERROR_OVER_CONTENT_LEN)
-            return;
+            return
         try:
             post_data = self.rfile.read(content_length).decode('utf-8')
         except:
@@ -269,7 +272,7 @@ class GameNotifyHandler(BaseHTTPRequestHandler):
             log(f"{dt}\nERROR: bad ip address\n{post_data}")
             self._set_response(400)
             self.wfile.write(ERROR_NO_CLIENT_ADDRESS)
-            return;
+            return
 
         # -- parse and validate POST message -- 
 
@@ -649,6 +652,7 @@ if __name__ == '__main__':
     # -- default args --
     port = 8192
     verbose = False
+    server_ct = 4
 
     arg_ct = len(argv)
     if arg_ct > 1:
@@ -677,12 +681,31 @@ if __name__ == '__main__':
             if i >= arg_ct:
                 break
 
-    server = HTTPServer(('', port), GameNotifyHandler)
-    print(f'server running on port {port}, verbose={"true" if verbose else "false"}')
-    if verbose:
-        print_registry()
-    try:
-        prev_time = time()
-        server.serve_forever()
-    except KeyboardInterrupt:
-        server.server_close()
+    # server = HTTPServer(('', port), GameNotifyHandler)
+    # print(f'server running on port {port}, verbose={"true" if verbose else "false"}')
+    # if verbose:
+    #     print_registry()
+    # try:
+    #     prev_time = time()
+    #     server.serve_forever()
+    # except KeyboardInterrupt:
+    #     server.server_close()
+
+    local_ip = '192.168.0.203'
+    local_port = 8192
+    buffer_size = 1024
+
+    msg = "hello in udp"
+    msg_bytes = str.encode(msg)
+
+    udp_server_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
+    udp_server_socket.bind((local_ip, local_port))
+
+    print('server up')
+
+    while True:
+        msg_in = udp_server_socket.recvfrom(buffer_size) 
+        client_message = msg_in[0]
+        client_address = msg_in[1]
+        print(client_message, client_address)
+        udp_server_socket.sendto(msg_bytes, client_address)
