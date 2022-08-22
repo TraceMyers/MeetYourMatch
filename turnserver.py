@@ -8,12 +8,12 @@ from struct import pack, unpack
 import traceback
 
 
-STATUS_MASK                 = 0x0f
 STATUS_NONE                 = 0x00
-STATUS_NET_TEST             = 0x01
-STATUS_GROUPING             = 0x02
-STATUS_SESSION_PREPARING    = 0x03
-STATUS_SESSION_READY        = 0x04
+STATUS_REG_CLIENT           = 0x01
+STATUS_REG_HOST             = 0x02
+STATUS_GROUPING             = 0x03
+STATUS_SESSION_PREPARING    = 0x04
+STATUS_SESSION_READY        = 0x05
 STATUS_TRANSFER             = 0x08 
 STATUS_TRANSFER_NO_DATA     = 0x09 
 STATUS_TRANSFER_AGAIN       = 0x0a 
@@ -26,38 +26,37 @@ ERROR_TRANSFERS_MAXED       = 0x40
 ERROR_NO_SESSION            = 0x50
 ERROR_NO_CLIENT             = 0x60
 ERROR_NO_PARTNER            = 0x70
-ERROR_CLIENT_STATE_BEHIND   = 0x80 
-ERROR_CLIENT_STATE_AHEAD    = 0x90
-ERROR_BAD_STATUS            = 0xa0
-ERROR_FAST_POLL_RATE        = 0xb0
-ERROR_IP_LOG_MAXED          = 0xc0
-ERROR_CLIENT_LOG_MAXED      = 0xd0
-ERROR_NO_HOST               = 0xe0
+ERROR_BAD_STATUS            = 0x80
+ERROR_FAST_POLL_RATE        = 0x90
+ERROR_IP_LOG_MAXED          = 0xa0
+ERROR_CLIENT_LOG_MAXED      = 0xb0
+ERROR_NO_HOST               = 0xc0
 
-SORT_REGI = 0
-SORT_PAIR = 1
-SORT_INIT = 2
-SORT_REDY = 3
-SORT_TFER = 4
-SORT_KICK = 5
+SORT_HOST = 0
+SORT_CLNT = 1
+SORT_PAIR = 2
+SORT_INIT = 3
+SORT_REDY = 4
+SORT_TFER = 5
+SORT_KICK = 6
 
 ROLE_CLIENT = 0
 ROLE_HOST   = 1
 ROLE_NONE   = 2
 
-NO_CLDATA_I = 1
-
 # always ok
 CL_NAME_IS_HOST         = 0x0001
 CL_PRE_GROUPED          = 0x0002
+CL_ENCRYPTED            = 0x0004
 # admin
 CL_ADMIN                = 0x0100
 CL_UNLOCK_POLL_RATE     = 0x0200 | CL_ADMIN
 CL_ONLY_MY_SESSION      = 0x0400 | CL_ADMIN
-CL_VALIDATE_ALL_TFERS   = 0x0600 | CL_ADMIN
-CL_SET_TCP              = 0x0800 | CL_ADMIN
-CL_SET_UDP              = 0x0a00 | CL_ADMIN
-CL_RESTORE_DEFAULTS     = 0x0c00 | CL_ADMIN
+CL_VALIDATE_ALL_TFERS   = 0x0800 | CL_ADMIN
+CL_SET_TCP              = 0x1000 | CL_ADMIN
+CL_SET_UDP              = 0x2000 | CL_ADMIN
+CL_LAT_NEAREST          = 0x4000 | CL_ADMIN
+CL_RESTORE_DEFAULTS     = 0x8000 | CL_ADMIN
 
 KEY_CT = 200
 MAX_IP = KEY_CT * 2 # maximum number of clients in session
@@ -83,7 +82,6 @@ class ConnectionLog:
         if ip_address in self.ip_log:
             prev_time = self.ip_log[ip_address]
             if cur_time - prev_time < self.max_poll_rate:
-                # refuse connection, don't change log value
                 return ERROR_FAST_POLL_RATE
         elif len(self.ip_log.keys()) >= MAX_IP:
             return ERROR_IP_LOG_MAXED
@@ -112,30 +110,39 @@ class ConnectionLog:
 
 
 class Client:
+    """
+    Data passed from main process down pipes once sorted. Used for pre-session work.
+    """
 
-    __slots__ = (
-        'name', 'address', 'local_key', 'partner_key', 'local_status', 'remote_status', 'in_data',
-        'prev_time_stamp', 'latency', 'lat_ctr'
-    )
+    __slots__ = ('name', 'status', 'address', 'latency')
     def __init__(self, name, address):
+        # NOTE: to make this one-way, other processes will have to do more sorting
+        # take out check against local status
+        # processes need a SMALL central record of who belongs where
         self.name = name
+        self.status = STATUS_NONE
         self.address = address
-        self.local_key = -1
-        self.partner_key = None
-        self.local_status = STATUS_NONE
-        self.remote_status = STATUS_NONE
-        self.in_data = None
-        self.latency = [0.2, 0.2, 0.2]
-        self.lat_ctr = 0
-
-    def update_latency(self, time_stamp):
-        self.latency[self.lat_ctr] = time() - time_stamp
-        self.lat_ctr += 1
-        if self.lat_ctr == 3:
-            self.lat_ctr = 0
+        self.latency = 0.0
 
 
-class PairingData:
+class SessClient(Client):
+    """
+    Data passed from main process down pipes once sorted. Used in sessions.
+    """
+
+    __slots__ = ('data', )
+    def __init__(self, name, address):
+        super().__init__(name, address)
+        self.data = None
+
+
+class LocalClient:
+
+    def __init__(self):
+        pass
+
+
+class GroupingData:
 
     def __init__(self):
         self.clients = [None for i in range(KEY_CT)]
@@ -161,16 +168,21 @@ class CLData:
         self.name = 'JoeErrname'
         self.admin_key = None
         self.client_data = b'\x00\x00\x00\x00' * 111
-        self.local_i = -1
 
-    def unpacket(self, data):
-        self.status = unpack('<B', data[0])
-        self.error = unpack('<B', data[1])
-        self.flags = unpack('<H', data[2:4])
-        self.time_stamp = unpack('<f', data[4:8])
-        self.name = data[8:48].decode()
-        self.admin_key = unpack('<16s', data[48:64])[0].decode()
-        self.client_data = data[64:]
+    def unpacket_udp(self, data):
+        # self.status = unpack('<B', data[0]) # no need to pipe
+        # self.error = unpack('<B', data[1]) # no need to pipe
+        # self.flags = unpack('<H', data[2:4]) # no need to pipe
+        # self.time_stamp = unpack('<f', data[4:8]) # no need to pipe
+        # self.name = data[8:48].decode() # copy to client
+        # self.admin_key = unpack('<16s', data[48:64])[0].decode() # no need to pipe
+        # self.client_data = data[64:] # copy to client
+        self.status, self.error, self.flags, self.time_stamp, \
+        self.name, self.admin_key, self.client_data = unpack('<2BHf10s16s444s', data)
+
+
+def get_timestamp():
+    return time.time() * 1000 % 10000000 # milliseconds for 32 bits
 
 
 def pack_udp(cl_data):
@@ -231,55 +243,79 @@ def session_init():
     pass
 
 
-def proc_entry(pipe, reponses, is_handler):
-    # TODO: this is wrong, would instantiate separately. pass them in instead
-    # regi_data = Registry()
-    # pair_data = PairingData()
-    # sint_data = SessionInitData()
-    # sess_data = SessionData()
-    pass
-
-
-def handle_clients(client_pipe, drop_pipe, responses):
-    # TODO: lock function calls so access to their data structures
-    client_data = client_pipe.recv()
-    drop_list = drop_pipe.recv()
-    pass
-
-
-def receive_clients(
+def handle_clients(
     udp_socket, 
-    connect_log, 
-    handler_pipes,
-    responses,
-    cldata_t,
+    tcp_socket, 
+    resp_queue, 
+    data_queue, 
+    client_pipe, 
+    drop_pipe, 
+    max_sessions
+):
+    # client_data = client_pipe.recv()
+    # drop_list = drop_pipe.recv()
+
+    while True:
+        # become grouping process if needed
+        #   take register buffer and add all to grouping
+        #   group clients until no longer possible, return
+
+        client = client_pipe.recv()
+        client_status = client.status
+
+        if client_status == STATUS_REG_CLIENT or client_status == STATUS_REG_HOST:
+            # check if client in register buffer
+            # place in buffer if not
+            pass
+        elif client_status == STATUS_GROUPING:
+            # check on grouping process status
+            pass
+        elif client_status
+        data = data_queue.get()
+        # TODO: decode
+
+
+def incoming_sort(
+    udp_socket,
+    tcp_socket,
+    resp_queue,
+    connect_log,
     connect_lock,
-    buffer_size,
-    subproc_ct
+    handler_pipe,
+    incoming,
+    incoming_lock
 ):
     """
-    read socket messages, parse sorting data and pipe sorted data to handler processes
+    Parse socket messages, log connections, handle flags, send back some errors, and
+    pipe sorted data to handler processes.
     """
-    pipe_i = -1
+    #TODO: remove Client and create SessClient when transitioning to session
 
-    # optimization
-    udp_socket_recvfrom = udp_socket.recvfrom
+    error_cldata = CLData()
+    error_cldata.error = ERROR_BAD_STATUS
+    cldata = CLData()
+
+    incoming_lock_acquire = incoming_lock.acquire
+    incoming_lock_release = incoming_lock.release
+    udp_socket_sendto = udp_socket.sendto
     connect_log_log_ip = connect_log.log_ip
     connect_log_get_client = connect_log.get_client
     connect_lock_acquire = connect_lock.acquire
     connect_lock_release = connect_lock.release
-    responses_put = responses.put
-
-    # -- main process, secondary thread loop --
+    resp_queue_put = resp_queue.put
+    resp_queue_get = resp_queue.get
+    handler_pipe_send = handler_pipe.send
+    cldata_unpacket_udp = cldata.unpacket_udp
 
     while True:
-        try:
-            msg = udp_socket_recvfrom(buffer_size)
-            
-        except WindowsError: 
-            # probably incoming package too big; ignore
-            # TODO: get more details
-            continue
+
+        # pop() is atomic, but it throws an exception if the list is empty. Haven't tested a 
+        # try/except, but I suspect throwing an exception is worse than using a lock
+        incoming_lock_acquire()
+        while len(incoming) == 0:
+            pass
+        msg = incoming.popleft()
+        incoming_lock_release()
 
         # -- log connection and refuse if log maxed or if client polling too often --
 
@@ -288,84 +324,74 @@ def receive_clients(
         error = connect_log_log_ip(ip_address)
         connect_lock_release()
         if error > 0:
-            responses_put((error, ip_address, None))
+            error_cldata.error = error
+            error_cldata.time_stamp = time()
+            key = resp_queue_get()
+            udp_socket_sendto(pack_udp(error_cldata), ip_address)
+            resp_queue_put(key)
             continue
 
-        # -- get a cldata struct --
-
-        cldata = None
-        for i in range(len(cldata_t)):
-            if cldata_avail[i]:
-                cldata = cldata_t[i]
-                cldata_avail[i] = False
-                break
-        if cldata is None:
-            print(
-                'ERROR recieve_clients(): cldata not available due to poor multithreading.'
-                ' dropping packet.'
-            )
-            continue
-
-        cldata.unpacket(msg[0])
+        cldata_unpacket_udp(msg[0])
 
         # TODO: handle admin key and flags on cldata
 
         remote_status = cldata.remote_status
 
-        # -- verify valid client status and sort -- 
-
-        pipe_i += 1
-        if pipe_i >= subproc_ct:
-            pipe_i = 0
         if remote_status == STATUS_NONE:
-            c = Client(name=cldata.name, address=ip_address)
-            handler_pipes[pipe_i].send((c, cldata, SORT_REGI))
+            client = Client(cldata.name, ip_address)
+            if cldata.flags & CL_NAME_IS_HOST:
+                client.status = STATUS_REG_HOST
+            else:
+                client.status = STATUS_REG_CLIENT
+            connect_log.ip_to_client[ip_address] = client # atomic
+            handler_pipe_send(client)
         else:
             connect_lock_acquire()
             client = connect_log_get_client(ip_address)
             connect_lock_release()
             if client is None:
-                responses_put((ERROR_NO_CLIENT, ip_address, None, NO_CLDATA_I))
+                error_cldata.error = ERROR_NO_CLIENT
+                error_cldata.time_stamp = time()
+                key = resp_queue_get()
+                udp_socket_sendto(pack_udp(error_cldata), ip_address)
+                resp_queue_put(key)
                 continue
-            client.update_latency(cldata.time_stamp)
-            if remote_status & STATUS_TRANSFER:
-                if client.local_status & STATUS_TRANSFER:
-                    handler_pipes[pipe_i].send((client, cldata, SORT_TFER))
-                responses_put((ERROR_BAD_STATUS, ip_address, None, NO_CLDATA_I))
-            elif remote_status == STATUS_GROUPING:
-                if client.local_status == STATUS_GROUPING:
-                    handler_pipes[pipe_i].send((client, cldata, SORT_PAIR))
-                elif client.local_status == STATUS_SESSION_PREPARING:
-                    handler_pipes[pipe_i].send((client, cldata, SORT_INIT))
-                else:
-                    responses_put((ERROR_BAD_STATUS, ip_address, None, NO_CLDATA_I))
-                    continue
-            elif remote_status == STATUS_SESSION_PREPARING:
-                if client.local_status == STATUS_SESSION_PREPARING:
-                    handler_pipes[pipe_i].send((client, cldata, SORT_INIT))
-                else:
-                    responses_put((ERROR_BAD_STATUS, ip_address, None, NO_CLDATA_I))
-                    continue
-            elif remote_status == STATUS_SESSION_READY:
-                if client.local_status == STATUS_SESSION_PREPARING \
-                or client.local_status == STATUS_SESSION_READY:
-                    handler_pipes[pipe_i].send((client, cldata, SORT_REDY))
-                elif client.local_status == STATUS_TRANSFER:
-                    handler_pipes[pipe_i].send((client, cldata, SORT_TFER))
-                else:
-                    responses_put((ERROR_BAD_STATUS, ip_address, None, NO_CLDATA_I))
-                    continue
+            if remote_status <= STATUS_TRANSFER_AGAIN:
+                client.latency = time() - cldata.time_stamp
+                client.status = remote_status
+                handler_pipe_send(client)
             else:
-                responses_put((ERROR_BAD_STATUS, ip_address, None, NO_CLDATA_I))
+                error_cldata.error = ERROR_BAD_STATUS
+                error_cldata.time_stamp = time()
+                key = resp_queue_get()
+                udp_socket_sendto(pack_udp(error_cldata), ip_address)
+                resp_queue_put(key)
 
 
-def main():
+def incoming_buffer(
+    udp_socket, 
+    tcp_socket,
+    incoming,
+    buffer_size
+):
+    """
+    buffer incoming data
+    """
+    udp_socket_recvfrom = udp_socket.recvfrom
 
-    # TODO: piped objects are copied, so just give each thread one cldata
+    while True:
+        try:
+            incoming.append(udp_socket_recvfrom(buffer_size))
+        except WindowsError: 
+            # probably incoming package too big; ignore
+            # TODO: get more details
+            continue
 
-    udp_port = 8192
+
+def run_head():
+    udp_port = 7777
     udp_bufsize = 576
-    tcp_port = 16777
+    tcp_port = 17777
     tcp_bufsize = 1500
     local_ip = '192.168.0.203'
     buffer_size = udp_bufsize
@@ -373,10 +399,8 @@ def main():
     ip_turnover_time = 15
     ip_turnover_update = 5
     max_poll_rate = 0.099
-    cldata_ct = 160
-    thread_per_proc_ct = 2
-    thread_ct = (subproc_ct + 1) * thread_per_proc_ct
-    cldata_ct_per_thread = cldata_ct // thread_ct
+    incoming = []
+    max_sessions = 100
 
     connect_log = ConnectionLog(max_poll_rate, ip_turnover_time)
 
@@ -385,53 +409,62 @@ def main():
     tcp_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
     tcp_socket.bind((local_ip, tcp_port))
 
-    print(f'UDP TURN server running on {local_ip}:{udp_port}')
-
-    # preallocating plenty for everybody; each is only written to in the owning process
-    cldata_all = [[CLData() for a in range(cldata_ct_per_thread)] for b in range(thread_ct)]
-
-    reccl_handler_pipes = (Pipe() for _ in range(subproc_ct))
-    reccl_handler_pipes_rem = [pipe[0] for pipe in reccl_handler_pipes]
-    reccl_handler_pipes_loc = [pipe[1] for pipe in reccl_handler_pipes]
+    incsort_handler_pipes = (Pipe() for _ in range(subproc_ct))
+    incsort_handler_pipes_rem = [pipe[0] for pipe in incsort_handler_pipes]
+    incsort_handler_pipes_loc = [pipe[1] for pipe in incsort_handler_pipes]
     main_handler_pipes = (Pipe() for _ in range(subproc_ct))
     main_handler_pipes_rem = [pipe[0] for pipe in main_handler_pipes]
     main_handler_pipes_loc = [pipe[1] for pipe in main_handler_pipes]
-    responses = multiprocessing.Manager().Queue()
+    resp_queue = multiprocessing.Manager().Queue() # apparently faster than multiprocessing.Queue
+    handler_data_queue = multiprocessing.Manager().Queue()
+    resp_queue.put((1,))
     connect_lock = Lock()
+    incoming_lock = Lock()
+
+    # TODO: consider encoding and decoding these structures if this is slow
+    handler_data = [GroupingData()]
+    handler_data.append([SessionData() for _ in range(max_sessions)])
+    handler_data_queue.put(handler_data)
 
     handler_args = (
         (
-            reccl_handler_pipes_rem[i], 
-            main_handler_pipes_rem[i], 
-            responses, 
-            cldata_all[2*i:(2*(i+1))]
+            udp_socket,
+            tcp_socket,
+            resp_queue,
+            handler_data_queue,
+            incsort_handler_pipes_rem[i], 
+            main_handler_pipes_rem[i],
+            max_sessions
         ) 
         for i in range(subproc_ct)
     )
-    reccl_args = (
-        udp_socket, 
-        connect_log, 
-        reccl_handler_pipes_loc,
-        responses,
-        cldata_all[subproc_ct*thread_per_proc_ct],
-        connect_lock,
-        buffer_size,
-        subproc_ct
-    )
+    incsort_args = [
+        (
+            udp_socket, 
+            tcp_socket,
+            resp_queue,
+            connect_log, 
+            connect_lock,
+            incsort_handler_pipes_loc[i],
+            incoming,
+            incoming_lock
+        ) 
+        for i in range(subproc_ct)
+    ]
+    incbuf_args = (udp_socket, tcp_socket, incoming, buffer_size)
 
     handlers = [Process(target=handle_clients, args=handler_args[i]) for i in range(subproc_ct)]
-    reccl_t = Thread(target=receive_clients, args=reccl_args)
+    incsort_t = [Thread(target=incoming_sort, args=incsort_args[i]) for i in range(subproc_ct)]
+    incbuf_t = Thread(target=incoming_buffer, args=incbuf_args)
+
     try:
+        incbuf_t.start()
         for i in range(subproc_ct):
+            incsort_t[i].start()
             handlers[i].start()
-        reccl_t.start()
         ip_turnover_ctr = 0
-        cldata_t = cldata_all[len(cldata_t) - 1]
-        cldata_error = CLData()
 
         # optimization, avoids dict lookups
-        responses_empty = responses.empty
-        udp_socket_sendto = udp_socket.sendto
         connect_log_turnover = connect_log.turnover
         connect_lock_acquire = connect_lock.acquire
         connect_lock_release = connect_lock.release
@@ -439,27 +472,8 @@ def main():
 
         prev_time = time()
 
-        # -- main process, main thread loop --
-
+        print(f'UDP TURN server running on {local_ip}:{udp_port}')
         while True:
-
-            # -- send responses to clients --
-
-            while not responses_empty():
-                try:
-                    response = responses.get()
-                    status = response[0]
-                    if status & ERROR_MASK:
-                        cldata_error.time_stamp = time()
-                        cldata_error.error = status
-                        cldata_error.status = 0
-                        udp_socket_sendto(pack_udp(cldata_error), response[1])
-                    else:
-                        # NOTE: probably don't need to send info back that the cldata recieved is
-                        # writable again, as long as each process has enough of them
-                        udp_socket_sendto(pack_udp(response[2]), response[1])
-                except:
-                    break
 
             # -- drop stale connections periodically --
             
@@ -484,4 +498,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    run_head()
