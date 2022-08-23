@@ -7,59 +7,78 @@ from struct import pack, unpack
 import traceback
 
 # TODO: name registering so that users can always expect to use the same name
+# TODO: put number 
+# TODO: use debugger *often*
 
+# --------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------:constants
+# --------------------------------------------------------------------------------------------------
 
-STATUS_NONE                 = 0x00
-STATUS_REG_CLIENT           = 0x01
-STATUS_REG_HOST             = 0x02
-STATUS_GROUPING             = 0x03
-STATUS_HOST_PREPARING       = 0x04
-STATUS_HOST_READY           = 0x05
-STATUS_CLIENT_WAITING       = 0x06
-STATUS_CLIENT_JOINING       = 0x07
-STATUS_TRANSFER             = 0x08 
-STATUS_TRANSFER_NO_DATA     = 0x09 
-STATUS_TRANSFER_AGAIN       = 0x0a 
+STATUS_NONE                 = 0x0000
+STATUS_REG_CLIENT           = 0x0001
+STATUS_REG_MASK             = STATUS_REG_CLIENT
+STATUS_REG_HOST             = 0x0003
+STATUS_REG_CLIENT_KNOWNHOST = 0x0005
+STATUS_REG_HOST_KNOWNHOST   = 0x0007
+STATUS_GROUPING             = 0x0008
+STATUS_HOST_PREPARING       = 0x0009
+STATUS_HOST_READY           = 0x000a
+STATUS_CLIENT_WAITING       = 0x000b
+STATUS_CLIENT_JOINING       = 0x000c
+STATUS_TRANSFER             = 0x00f0 
+STATUS_TRANSFER_MASK        = STATUS_TRANSFER
+STATUS_TRANSFER_NO_DATA     = 0x0010
+STATUS_TRANSFER_AGAIN       = 0x0020 
 
-ERROR_MASK                  = 0xf0
-ERROR_DATA_FORMAT           = 0x10
-ERROR_REGISTER_FAIL         = 0x20
-ERROR_INTAKE_MAXED          = 0x30
-ERROR_TRANSFERS_MAXED       = 0x40
-ERROR_NO_SESSION            = 0x50
-ERROR_NO_CLIENT             = 0x60
-ERROR_NO_PARTNER            = 0x70
-ERROR_BAD_STATUS            = 0x80
-ERROR_FAST_POLL_RATE        = 0x90
-ERROR_IP_LOG_MAXED          = 0xa0
-ERROR_CLIENT_LOG_MAXED      = 0xb0
-ERROR_NO_HOST               = 0xc0
+ERROR_MASK                  = 0xff00
+ERROR_DATA_FORMAT           = 0x0100
+ERROR_REGISTER_FAIL         = 0x0200
+ERROR_INTAKE_MAXED          = 0x0300
+ERROR_TRANSFERS_MAXED       = 0x0400
+ERROR_NO_SESSION            = 0x0500
+ERROR_NO_CLIENT             = 0x0600
+ERROR_NO_PARTNER            = 0x0700
+ERROR_BAD_STATUS            = 0x0800
+ERROR_FAST_POLL_RATE        = 0x0900
+ERROR_IP_LOG_MAXED          = 0x0a00
+ERROR_CLIENT_LOG_MAXED      = 0x0b00
+ERROR_NO_HOST               = 0x0c00
 
 ROLE_CLIENT = 0
 ROLE_HOST   = 1
 ROLE_NONE   = 2
 
-# client options
-CL_NAME_IS_HOST         = 0x0001    # if also PRE_GROUPED, this client will host and others will join 
-                                    # by host name. else, requests to host in randomly matched session
-CL_PRE_GROUPED          = 0x0002    # only match me
-CL_ENCRYPTED            = 0x0004    # passed along to inform all clients in session that some or all
-                                    # data is encrypted; clients figure out the rest
+# any client options
+CL_ENCRYPTED            = 0x0001    # passed along to inform receivers of my data that some or all
+                                    # of the data is encrypted; clients figure out the rest
+# host options
+CL_SET_GROUP_SIZE       = 0x0002    # if hosting, override default group size of 2, pass group size
+                                    # in as first int16 in data
 # group options
 CL_RELAY_ONLY           = 0x0008    # session starts without preparing, waiting, joining, etc
 # admin options
-CL_ADMIN                = 0x0100
+CL_ADMIN                = 0x0100            # password required for flags & CL_ADMIN > 0
 CL_UNLOCK_POLL_RATE     = 0x0200 | CL_ADMIN # unlock poll rate lock for this client
-CL_ONLY_MY_SESSION      = 0x0400 | CL_ADMIN # dump/refuse any client without provided password
-CL_RESTORE_DEFAULTS     = 0x0800 | CL_ADMIN # turn off anything changed by flags (can be combined
+CL_ONLY_MY_SESSIONS     = 0x0400 | CL_ADMIN # kick&refuse any client not connecting to my session
+CL_MULTI_SESSION        = 0x0800 | CL_ADMIN # allow this client to enter mutliple sessions
+CL_SET_PASSWORD         = 0x1000 | CL_ADMIN # set the admin password
+CL_ONLY_MY_TRAFFIC      = 0x2000 | CL_ADMIN # kick&refuse anybody but me
+CL_RESTORE_DEFAULTS     = 0x8000 | CL_ADMIN # turn off anything changed by flags (can be combined
                                             # with other changes)
-CL_MULTI_SESSION        = 0x1000 | CL_ADMIN # allow this client to enter mutliple sessions
 
 KEY_CT = 200
 MAX_IP = KEY_CT * 2 # maximum number of clients in session
 MAX_GROUPSIZE = 16 # tentative
 GAP = b'\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0'
+DEFAULT_CLDATA = b'\x00\x00' * 221
+AVG_LATENCY_CTR_MIN = 10 # minimum number of packets post-registration
+# used for grouping
+LOW_LATENCY_MAX = 80 
+MID_LATENCY_MAX = 120
 
+# --------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------------:classes
+# --------------------------------------------------------------------------------------------------
 
 class ConnectionLog:
 
@@ -109,11 +128,11 @@ class ConnectionLog:
 
 class Client:
     """
-    Data passed from main process down pipes once sorted. Used for pre-session work.
+    Data piped from main process once sorted.
     """
 
-    __slots__ = ('name', 'status', 'address', 'latency')
-    def __init__(self, name, address, status=STATUS_NONE, latency=0.0):
+    __slots__ = ('name', 'status', 'address', 'latency', 'group_size')
+    def __init__(self, name, address, status, latency=0.0, group_size=2):
         # NOTE: to make this one-way, other processes will have to do more sorting
         # take out check against local status
         # processes need a SMALL central record of who belongs where
@@ -121,26 +140,21 @@ class Client:
         self.status = status
         self.address = address
         self.latency = latency
+        self.group_size = group_size
 
 
-class SessClient(Client):
-    """
-    Data passed from main process down pipes once sorted. Used in sessions.
-    """
+class Session:
 
-    __slots__ = ('data', )
-    def __init__(self, name, address):
-        super().__init__(name, address)
-        self.data = None
+    def __init__(self):
+        pass
 
 
 class GrpClient(Client):
 
     def __init__(self, client):
-        super().__init__(client.name, client.address, client.status, client.latency)
-        self.client_index = -1
-        self.group_index = -1
-        self.max_groupsize = 2 # changed only by host to be < MAX_GROUPSIZE
+        super().__init__(client.name, client.address, client.status, 0, client.group_size)
+        self.avg_latency = 0
+        self.avg_latency_ctr = 0
 
 
 class RegisterBuffer:
@@ -170,40 +184,38 @@ class SessionData:
 class CLData:
 
     __slots__ = (
-        'status', 'error', 'flags', 'time_stamp', 'name', 'admin_key', 'client_data'
+        'status', 'flags', 'time_stamp', 'name', 'admin_key', 'client_data'
     )
     def __init__(self):
         self.status = STATUS_NONE
-        self.error = 0
         self.flags = 0
         self.time_stamp = 0
         self.name = 'JoeErrname'
         self.admin_key = None
-        self.client_data = b'\x00\x00\x00\x00' * 111
+        # 8/23/22: udp client data at 442b
+        self.client_data = DEFAULT_CLDATA
 
     def unpacket_udp(self, data):
-        # self.status = unpack('<B', data[0]) # no need to pipe
-        # self.error = unpack('<B', data[1]) # no need to pipe
-        # self.flags = unpack('<H', data[2:4]) # no need to pipe
-        # self.time_stamp = unpack('<f', data[4:8]) # no need to pipe
-        # self.name = data[8:48].decode() # copy to client
-        # self.admin_key = unpack('<16s', data[48:64])[0].decode() # no need to pipe
-        # self.client_data = data[64:] # copy to client
-        self.status, self.error, self.flags, self.time_stamp, \
-        self.name, self.admin_key, self.client_data = unpack('<2BHf10s16s444s', data)
+        self.status, self.flags, self.time_stamp, \
+        self.name, self.admin_key, self.client_data = unpack('<IHf10s16s444s', data)
         self.name = self.name.decode()
         self.admin_key = self.admin_key.decode()
 
+# --------------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------:helper functions
+# --------------------------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------------------:packing
 
 def get_timestamp():
-    return time.time() * 1000 % 10000000 # milliseconds for 32 bits
+    return time.time() * 1000 % 10000000 # milliseconds for single-precision float packing
 
 
 def pack_udp(cl_data):
     global GAP
     return pack(
-        f'<2BHf10s16s444s',
-        cl_data.status, cl_data.error, cl_data.flags, cl_data.time_stamp, 
+        f'<IHf10s16s442s',
+        cl_data.status, cl_data.flags, cl_data.time_stamp, 
         bytes(cl_data.name, 'utf-8'), GAP, cl_data.client_data
     )
 
@@ -211,11 +223,16 @@ def pack_udp(cl_data):
 def pack_tcp(cl_data):
     global GAP
     return pack(
-        f'<2BHf10s16s1316s',
-        cl_data.status, cl_data.error, cl_data.flags, cl_data.time_stamp, 
+        f'<IHf10s16s1314s',
+        cl_data.status, cl_data.flags, cl_data.time_stamp, 
         bytes(cl_data.name, 'utf-8'), GAP, cl_data.client_data
     )
 
+
+def set_group_size(client): 
+    client.group_size = unpack('<H', client.data[0:2])[0]
+
+# -----------------------------------------------------------------------------------------:register
 
 def regbuf_add_client_to_local(client, register_buffer):
     buf_client_ct = register_buffer.client_ct
@@ -239,8 +256,9 @@ def regbuf_copy_local_to_central(local, central):
             central_clients[address] = local_clients[address]
     local_clients.clear()
 
+# --------------------------------------------------------------------------------------------:group
 
-def grpdat_merge_regbuf(grpdat, regbuf, cldata_list):
+def grpdat_merge_regbuf(grpdat, regbuf, grp_cldata):
     regbuf_clients = regbuf.clients
     regbuf_client_keys = regbuf_clients.keys()
     grpdat_addresses = grpdat.addresses
@@ -252,15 +270,16 @@ def grpdat_merge_regbuf(grpdat, regbuf, cldata_list):
         if address in grpdat_addresses:
             continue
         elif grpdat_client_ct >= KEY_CT:
-            cldata_list[cldata_ctr].error = ERROR_INTAKE_MAXED
+            grp_cldata[cldata_ctr].status |= ERROR_INTAKE_MAXED
         grpdat_addresses_add(address)
-        grpdat_ungrouped_clients[grpdat_client_ct] = regbuf_clients[address]
+        grpdat_ungrouped_clients[grpdat_client_ct] = GrpClient(regbuf_clients[address])
         grpdat_client_ct += 1
     regbuf_clients.clear()
     regbuf.client_ct = 0
     grpdat.client_ct = grpdat_client_ct
-    cldata_list[cldata_ctr].error = STATUS_NONE # marks end
+    return cldata_ctr
 
+# ----------------------------------------------------------------------------------:other functions
 
 def register_clients():
     pass
@@ -276,86 +295,31 @@ def pair_clients():
 def session_init():
     pass
 
+# --------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------:thread entry points
+# --------------------------------------------------------------------------------------------------
 
-def handle_clients(
-    udp_socket, 
-    tcp_socket, 
+def handle_grouping(
+    grpdat,
     regbuf_queue,
-    grpdat_queue,
-    resp_queue, 
-    client_pipe, 
-    drop_pipe, 
-    max_sessions,
-    subproc_ct
-):
-    # drop_list = drop_pipe.recv()
-    regbuf_local = RegisterBuffer()
-    cldata_list = [CLData() for _ in range(KEY_CT*subproc_ct)]
+    grp_cldata
+): 
+    regbuf_central = regbuf_queue.get()
+    cldata_ctr = grpdat_merge_regbuf(grpdat, regbuf_central, grp_cldata)
+    regbuf_queue.put(regbuf_central)
 
-    regbuf_turnover_ctr = 0
-    regbuf_turnover_time = 3
-    grpdat_turnover_ctr = 0
-    grpdat_turnover_time = 4
-    prev_time = time()
-
-    while True:
-        new_time = time()
-        regbuf_turnover_ctr += new_time - prev_time
-        grpdat_turnover_ctr += new_time - prev_time
-        prev_time = new_time
-
-        # -- one process draws the short straw to do grouping work --
-
-        if grpdat_turnover_ctr >= grpdat_turnover_time:
-            # I see no other solution than eating the exception here. checking for empty
-            # will reduce the number of exceptions thrown, but it's still not guaranteed to have the
-            # item on the next instruction. I don't want any processes specializing, so I'm stuck
-            # with this. Alternatively, this could use something I'm calling a 'straw gate', wherein
-            # processes draw from shared memory to see who gets the short straw, but that seems
-            # unnecessary.
-            if not grpdat_queue.empty():
-                try:
-                    grpdat = grpdat_queue.get_nowait()
-                    regbuf_central = regbuf_queue.get()
-                    grpdat_merge_regbuf(grpdat, regbuf_central, cldata_list)
-                except:
-                    pass
-        # become grouping process if needed
-        #   take central register buffer and add all to grouping
-        #   group clients until no longer possible, return
-
-        # -- copy the local register buffer into the central registry --
-
-        if regbuf_turnover_ctr >= regbuf_turnover_time and regbuf_local.client_ct > 0:
-            regbuf_central = regbuf_queue.get()
-            status = regbuf_copy_local_to_central(regbuf_local, regbuf_central)
-            regbuf_queue.put(regbuf_central)
-            regbuf_turnover_ctr = 0
-
-        client = client_pipe.recv()
-        client_status = client.status
-
-        # data = data_queue.get()
-        # TODO: encode-decode with shared memory objects like Value and Array
-
-        if client_status & STATUS_TRANSFER:
+    grpdat_client_ct = grpdat.client_ct
+    grpdat_ungrouped_clients = grpdat.ungrouped_clients
+    for i in range(grpdat_client_ct):
+        grpclient = grpdat_ungrouped_clients[i]
+        grpclient_status = grpclient.status
+        if grpclient_status == STATUS_REG_HOST or grpclient_status == STATUS_REG_HOST_KNOWNHOST:
+            
             pass
-        elif client_status == STATUS_HOST_READY:
+        else: # STATUS_REG_HOST
             pass
-        elif client_status == STATUS_HOST_PREPARING:
-            pass
-        elif client_status == STATUS_CLIENT_WAITING:
-            pass
-        elif client_status == STATUS_CLIENT_JOINING:
-            pass
-        elif client_status == STATUS_REG_CLIENT or client_status == STATUS_REG_HOST:
-            status = regbuf_add_client_to_local(client, regbuf_local)
-            if status & ERROR_MASK:
-                # return error
-                pass
-        else: # STATUS_GROUPING
-            # check on grouping process status
-            pass
+    grpdat.client_ct = grpdat_client_ct
+    grp_cldata[cldata_ctr].staus |= STATUS_NONE # marks end of 
 
 
 def incoming_sort(
@@ -377,9 +341,12 @@ def incoming_sort(
     # the process, including in multiple sessions. solution: just drop them when the intake client 
     # gets to session and refuse their connection for a while.
     #TODO: make sure name not in use
+    #TODO: forget one-way data. subprocesses are session data agnostic, so there is no reason
+    # to shove all of that through the pipes. Just have a sender thread. main process needs
+    # more to do anyway
 
     error_cldata = CLData()
-    error_cldata.error = ERROR_BAD_STATUS
+    error_cldata.status |= ERROR_BAD_STATUS
     cldata = CLData()
 
     incoming_lock_acquire = incoming_lock.acquire
@@ -411,7 +378,7 @@ def incoming_sort(
         error = connect_log_log_ip(ip_address)
         connect_lock_release()
         if error > 0:
-            error_cldata.error = error
+            error_cldata.status |= error
             error_cldata.time_stamp = time()
             key = resp_queue_get()
             udp_socket_sendto(pack_udp(error_cldata), ip_address)
@@ -424,12 +391,8 @@ def incoming_sort(
 
         remote_status = cldata.remote_status
 
-        if remote_status == STATUS_NONE:
-            client = Client(cldata.name, ip_address)
-            if cldata.flags & CL_NAME_IS_HOST:
-                client.status = STATUS_REG_HOST
-            else:
-                client.status = STATUS_REG_CLIENT
+        if remote_status & STATUS_REG_MASK:
+            client = Client(cldata.name, ip_address, remote_status)
             connect_log.ip_to_client[ip_address] = client # atomic
             handler_pipe_send(client)
         else:
@@ -437,17 +400,19 @@ def incoming_sort(
             client = connect_log_get_client(ip_address)
             connect_lock_release()
             if client is None:
-                error_cldata.error = ERROR_NO_CLIENT
+                error_cldata.status |= ERROR_NO_CLIENT
                 error_cldata.time_stamp = time()
                 key = resp_queue_get()
                 udp_socket_sendto(pack_udp(error_cldata), ip_address)
                 resp_queue_put(key)
             elif remote_status <= STATUS_TRANSFER_AGAIN:
+                if remote_status == STATUS_REG_HOST or remote_status == STATUS_REG_HOST_KNOWNHOST:
+                    set_group_size(client)
                 client.latency = time() - cldata.time_stamp
                 client.status = remote_status
                 handler_pipe_send(client)
             else:
-                error_cldata.error = ERROR_BAD_STATUS
+                error_cldata.status |= ERROR_BAD_STATUS
                 error_cldata.time_stamp = time()
                 key = resp_queue_get()
                 udp_socket_sendto(pack_udp(error_cldata), ip_address)
@@ -472,9 +437,16 @@ def incoming_buffer(
             # probably incoming package too big; ignore
             # TODO: get more details
             continue
+        except Exception as e:
+            print('ERROR turnserver.py incoming_buffer():: passed exception from udp_socket_recvfrom()')
+            print(e)
+            continue
 
+# --------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------:process entry points
+# --------------------------------------------------------------------------------------------------
 
-def run_head():
+def main():
     udp_port = 7777
     udp_bufsize = 576
     tcp_port = 17777
@@ -504,16 +476,14 @@ def run_head():
     multi_manager = Manager()
     resp_queue = multi_manager.Queue() # apparently faster than multiprocessing.Queue
     regbuf_queue = multi_manager.Queue()
-    grpdat_queue = multi_manager.Queue()
     resp_queue.put((0,))
     connect_lock = Lock()
     incoming_lock = Lock()
 
     # TODO: consider encoding and decoding these structures if this is slow
     central_regbuf = RegisterBuffer()
-    central_grpdat = GroupingData()
+    grpdat = GroupingData()
     regbuf_queue.put(central_regbuf)
-    grpdat_queue.put(central_grpdat)
 
     handler_args = (
         (
@@ -532,13 +502,14 @@ def run_head():
             udp_socket, 
             tcp_socket,
             regbuf_queue,
-            grpdat_queue,
+            grpdat if i == 0 else None,
             resp_queue,
             connect_log, 
             connect_lock,
             incsort_handler_pipes_loc[i],
             incoming,
-            incoming_lock
+            incoming_lock,
+            True if i == 0 else False
         ) 
         for i in range(subproc_ct)
     ]
@@ -588,5 +559,88 @@ def run_head():
             c.kill()
 
 
+def handle_clients(
+    udp_socket, 
+    tcp_socket, 
+    regbuf_queue,
+    grpdat,
+    resp_queue, 
+    client_pipe, 
+    drop_pipe, 
+    max_sessions,
+    subproc_ct,
+    group_duty
+):
+    # drop_list = drop_pipe.recv()
+    regbuf_local = RegisterBuffer()
+    cldata = [CLData() for _ in range(KEY_CT*subproc_ct)]
+    if group_duty:
+        grp_cldata = [CLData() for _ in range(MAX_IP*2)]
+    else:
+        grp_cldata = None
+
+    regbuf_turnover_ctr = 0
+    regbuf_turnover_time = 3
+    grpdat_turnover_ctr = 0
+    grpdat_turnover_time = 4
+    prev_time = time()
+
+    # instantiating this twice before the first start() call so we can just use is_alive() without
+    # a None check
+    grouping_thread = Thread(
+        target=handle_grouping,
+        args=(grpdat, regbuf_queue, cldata)
+    )
+
+    while True:
+        new_time = time()
+        delta_time = new_time - prev_time
+        regbuf_turnover_ctr += delta_time
+        grpdat_turnover_ctr += delta_time
+        prev_time = new_time
+
+        # -- the first subprocess does grouping work regularly --
+        # -- otherwise & others copy the local register buffer into the central registry --
+
+        if group_duty and grpdat_turnover_ctr >= grpdat_turnover_time:
+            if not grouping_thread.is_alive():
+                grouping_thread = Thread(
+                    target=handle_grouping,
+                    args=(grpdat, regbuf_queue, grp_cldata)
+                )
+                grouping_thread.start()
+            grpdat_turnover_ctr = 0
+        elif regbuf_turnover_ctr >= regbuf_turnover_time and regbuf_local.client_ct > 0:
+            regbuf_central = regbuf_queue.get()
+            status = regbuf_copy_local_to_central(regbuf_local, regbuf_central)
+            regbuf_queue.put(regbuf_central)
+            regbuf_turnover_ctr = 0
+
+        client = client_pipe.recv()
+        client_status = client.status
+
+        # TODO: encode-decode with shared memory objects like Value and Array
+
+        if client_status & STATUS_TRANSFER:
+            pass
+        elif client_status == STATUS_HOST_READY:
+            pass
+        elif client_status == STATUS_HOST_PREPARING:
+            pass
+        elif client_status == STATUS_CLIENT_WAITING:
+            pass
+        elif client_status == STATUS_CLIENT_JOINING:
+            pass
+        elif client_status & STATUS_REG_MASK:
+            status = regbuf_add_client_to_local(client, regbuf_local)
+            if status & ERROR_MASK:
+                # return error
+                pass
+        else: # STATUS_GROUPING
+            # check on grouping process status
+            # update latency
+            pass
+
+
 if __name__ == '__main__':
-    run_head()
+    main()
