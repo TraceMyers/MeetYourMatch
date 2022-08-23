@@ -24,4 +24,5 @@
 <h3>Cons:</h3>
 <ul>
   <li>Higher latency than a dedicated game server.</li>
+  <li>All session traffic goes the host device's network.</li>
 </ul>
