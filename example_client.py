@@ -1,3 +1,6 @@
+"""
+Not currently an example
+"""
 import socket
 from struct import pack
 
