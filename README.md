@@ -5,7 +5,7 @@
 <h2>Overview</h2>
 <h3>Setup</h3>
 <ol>
-  <li>Copy turnserver.py onto a remote hosting server. It doesn't need to be a monster - just the kind usually used for hosting a website will do.</li>
+  <li>Copy turnserver.py onto a remote hosting server. It doesn't need to be a monster - a budget server from Contabo or Vultr will work.</li>
   <li>Either install the Unreal/Unity plugin or see client.py for interfacing with the server from home via python.</li>
   <li>Run turnserver.py.</li>
   <li>Your game/application can now connect with other clients! </li>
