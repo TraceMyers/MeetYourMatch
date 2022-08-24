@@ -1,6 +1,6 @@
 # MYM: Meet Your Match
 
-<p>A (currently in the works) simple, fast, multi-session STUN and TURN server with direct support for python, Unreal and GameMaker clients. Provides easy pre-grouped or automatic matchmaking and online multiplayer support. Supports a larger number of clients by connecting clients directly to each other, removing computational and network load away from the server.</p>
+<p>A (currently in the works) simple, fast, multi-session STUN and TURN server with direct support for python, Unreal and GameMaker clients. Provides pre-grouped or automatic matchmaking and session handling. Because clients connect directly to each other, computational and network load are removed from the server, allowing for many more clients per dollar spent on remote hosting.</p>
 
 <h2>Overview</h2>
 <h3>Setup</h3>
@@ -19,10 +19,11 @@
   <li>Inexpensive compared to dedicated server hosting.</li>
   <li>Many sessions, many clients per session are both possible.</li>
   <li>Matchmaking included - no need to code it yourself.</li>
-  <li>Customizability - use as a VPN, or use it for games or apps!</li>
+  <li>Customizability - use as a proxy, or use it for games or apps!</li>
   <li>Ease of use - simple interface and no lengthy server build/deploy loop.</li>
 </ul>
 <h3>Cons:</h3>
 <ul>
   <li>Often higher latency than a dedicated game server - depends on host connection.</li>
+  <li>Until a feature called 'host rotation' is implemented, hosts may leave and sessions will abruptly end.</li>
 </ul>
