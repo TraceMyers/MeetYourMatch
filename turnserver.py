@@ -473,7 +473,6 @@ def incoming_sort(
     # TODO: rn this allows for a user to create multiple client entries throughout
     # the process, including in multiple sessions. solution: just drop them when the intake client 
     # gets to session and refuse their connection for a while.
-    # TODO: make sure name not in use
     # TODO: forget one-way data. subprocesses are session data agnostic, so there is no reason
     # to shove all of that through the pipes. Just have a sender thread. main process needs
     # more to do anyway
