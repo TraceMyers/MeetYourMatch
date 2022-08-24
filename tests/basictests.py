@@ -3,6 +3,8 @@ from time import time, sleep
 from random import randint, choices
 import numpy as np
 from pandas import DataFrame as df
+import socket
+from struct import unpack
 
 
 def run_pipe(pipe, ticks, _type='number'):
@@ -357,19 +359,72 @@ def test_list():
     
     search_time = time() - start
     print(f'search time: {search_time}')
-    
 
 
+def recv_from_pipe(pipe, iter_ct, time_stamp):
+    for i in range(iter_ct):
+        pipe.recv()
+    delta_time = time() - time_stamp
+    print(f'pipe tuple & recv: {delta_time/iter_ct*1000000:.2f}\u03BCs delay per packet')
+    print(f'pipe tuple & recv: {delta_time:.3f}s delay over {iter_ct} packets')
+
+
+def recv_bytes_from_pipe(pipe, iter_ct, time_stamp):
+    try:
+        for i in range(iter_ct):
+            byte_data = pipe.recv_bytes()
+            # doesn't really matter if I'm grabbing the right bytes here
+            data = unpack('8s2H12sH', byte_data[:26])
+    except Exception as e:
+        print(e)
+        quit()
+    delta_time = time() - time_stamp
+    print(f'pipe bytes & recv: {delta_time/iter_ct*1000000:.2f}\u03BCs delay per packet')
+    print(f'pipe bytes & recv: {delta_time:.3f}s delay over {iter_ct} packets')
+
+def simple_pipe_test():
+    """
+    just to get a feel for how much of a delay a pipe adds between each packet recv & send
+    """
+    local_ip = '192.168.0.203'
+    local_port = 7777
+    bufsiz = 576
+    iter_ct = 10000
+    ip_port = (local_ip, local_port)
+    udp_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
+    udp_socket.bind(ip_port)
+    pipe_rcv, pipe_snd = Pipe()
+    data = ('fishbones', 0, 1, None, '2939302039393', 22)
+    data_bytes = b'20322003939383303283830230383838203303'
+
+    p = Process(target=recv_from_pipe, args=(pipe_rcv, iter_ct, time()))
+    p.start()
+    for i in range(iter_ct):
+        pipe_snd.send(data)
+    p.join()
+
+    sleep(0.1)
+
+    pipe_rcv, pipe_snd = Pipe()
+    p = Process(target=recv_bytes_from_pipe, args=(pipe_rcv, iter_ct, time()))
+    p.start()
+    for i in range(iter_ct):
+        pipe_snd.send_bytes(data_bytes)
+    p.join()
 
 
 if __name__ == '__main__':
-    # result: unbuffered is O(n), buffered is O(log(n))
+    # result: unbuffered is O(n), buffered is O(log(n)),
+    #           and for time, (very small tuple) < (number) < (small tuple)
     # test_pipes('tuple') 
 
-    # result: dict roughly 6x faster with 3000 clients and 3000 max clients, about the same for 100,100
+    # result: dict roughly 6x faster with 3000 clients and 3000 max clients, about the same for
+    #           100 & 100
     #test_ip_dict_vs_list() 
 
     # result: searching wins over methods
     # test_list()
+
+    simple_pipe_test()
     pass
 

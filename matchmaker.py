@@ -1,12 +1,21 @@
 from multiprocessing import Process, Pipe, active_children, Manager
 from threading import Thread, Lock
 from sys import argv
-from time import time
+from time import time, sleep
 import socket
 from struct import pack, unpack
 import traceback
 
 # NOTE: the use of ':' before each section name allows for easy section searching
+# NOTE: another architecture I thought of when waking: multi-headed with end-to-end recv & send
+#       processes that communicate with each other. And, data is piped in a circular fashion
+#       between them so they have fairly consistent piping times once the server is loaded.
+#       If all data is piped this way, the architecture scales indefinitely with increasingly
+#       worse connection refusal accuracy; so, to work, registration and connection refusal
+#       would have to happen on a separate server that maintains a master record of all
+#       clients in session; that server would inform the matchmaking & session server
+#       to expect a new connection, and the client would be told to connect to that server.
+#       registration should use TCP
 # TODO: name registering so that users can always expect to use the same name
 # TODO: use debugger *often*
 # TODO: try STUN then TURN for every session; STUN sessions in a separate cache
@@ -18,7 +27,7 @@ import traceback
 #       pass hosts client lists to expect messages from
 #       also serves as STUN success check
 # TODO: TURN latency gauging - handle per regular update
-
+# TODO: send_bytes() and recv_bytes() shaved off 10-20ms per 10,000 packets
 
 # --------------------------------------------------------------------------------------------------
 # ----------------------------------------------------------------------------------------:constants
@@ -58,6 +67,7 @@ ERROR_NO_HOST               = 0x0c00
 ERROR_HOST_NAME_TAKEN       = 0x0d00
 ERROR_SESSION_MAXED         = 0x0e00
 ERROR_SESSIONS_MAXED        = 0x0f00
+ERROR_ALREADY_REGISTERED    = 0x1000
 
 COM_STUN = 0
 COM_TURN = 1
@@ -213,9 +223,9 @@ class RegisterBuffer:
 
 class GroupingData:
 
-    __slots__ = ('ungrouped_clients', 'client_ct', 'addresses', 'groups')
+    __slots__ = ('ungrouped_clients', 'client_ct', 'addresses', 'sessions', 'session_ct')
     def __init__(self):
-        self.ungrouped_clients = [None for _ in range(SES_MAX)]
+        self.ungrouped_clients = []
         self.client_ct = 0
         self.addresses = set()
         self.sessions = []
@@ -317,11 +327,14 @@ def grpdat_merge_regbuf(
         client = regbuf_clients[address]
         client_status = client.status
         if address in grpdat_addresses:
+            cldata_ctr = add_to_cldata(grp_cldata, cldata_ctr, ERROR_ALREADY_REGISTERED, address)
             continue
         elif grpdat_client_ct >= SES_MAX:
+            cldata_ctr = add_to_cldata(grp_cldata, cldata_ctr, ERROR_INTAKE_MAXED, address)
             continue
-        if client_status == STATUS_REG_CLIENT:
+        elif client_status == STATUS_REG_CLIENT:
             cldata_ctr = add_to_cldata(grp_cldata, cldata_ctr, STATUS_GROUPING, address)
+            grpdat_ungrouped_clients.append(client)
         elif client_status == STATUS_REG_HOST or client_status == STATUS_REG_HOST_KNOWNHOST:
             client_name = client.name
             hostname_i = grpdat_hostname_index(grpdat_hosts, grpdat_session_ct, client_name)
@@ -334,8 +347,9 @@ def grpdat_merge_regbuf(
                 cldata_ctr = \
                     add_to_cldata(grp_cldata, cldata_ctr, ERROR_HOST_NAME_TAKEN, address)
                 continue
-            grpdat_sessions.append(Session(client))
             add_to_cldata(grp_cldata, cldata_ctr, STATUS_GROUPING, address)
+            grpdat_sessions.append(Session(client))
+            grpdat_session_ct += 1
         elif client_status == STATUS_REG_CLIENT_KNOWNHOST:
             hostname_index = \
                 grpdat_hostname_index(grpdat_hosts, grpdat_session_ct, client_name)
@@ -345,28 +359,26 @@ def grpdat_merge_regbuf(
                     cldata_ctr = \
                         add_to_cldata(grp_cldata, cldata_ctr, ERROR_SESSION_MAXED, address)
                     continue
-                else:
-                    # TODO: password check; just have default password None
-                    session.clients.append(client)
-                    session.client_ct += 1
-                    cldata_ctr = \
-                        add_to_cldata(grp_cldata, cldata_ctr, STATUS_CLIENT_WAITING, address)
-            join_request_list = get_session_jrq(session_hosts, client_name)
-            if join_request_list is None:
+                # TODO: password check; just have default password None
+                session.clients.append(client)
+                session.client_ct += 1
                 cldata_ctr = \
-                    add_to_cldata(grp_cldata, cldata_ctr, ERROR_NO_SESSION, address)
-                continue
+                    add_to_cldata(grp_cldata, cldata_ctr, STATUS_CLIENT_WAITING, address)
             else:
+                join_request_list = get_session_jrq(session_hosts, client_name)
+                if join_request_list is None:
+                    cldata_ctr = \
+                        add_to_cldata(grp_cldata, cldata_ctr, ERROR_NO_SESSION, address)
+                    continue
                 join_request_list.append(client)
                 cldata_ctr = add_to_cldata(grp_cldata, cldata_ctr, STATUS_GROUPING, address)
                 continue
-
         grpdat_addresses_add(address)
-        grpdat_ungrouped_clients[grpdat_client_ct] = GrpClient(regbuf_clients[address])
         grpdat_client_ct += 1
 
     regbuf_clients.clear()
     grpdat.client_ct = grpdat_client_ct
+    grpdat.session_ct = grpdat_session_ct
     return cldata_ctr
 
 
@@ -423,7 +435,7 @@ def handle_grouping(grpdat, regbuf_queue, grp_cldata, sessions_hostnames):
         regbuf_queue.put(regbuf)
         return
 
-    # avoiding piping a list we can just decompress from existing data here; should test
+    # avoiding piping a list we can just decompress from existing data here
     grpdat_sessions = grpdat.sessions
     grpdat_hostnames = [session.host.name for session in grpdat_sessions]
 
@@ -435,15 +447,14 @@ def handle_grouping(grpdat, regbuf_queue, grp_cldata, sessions_hostnames):
         grpdat_hostnames,
         sessions_hostnames
     )
-    regbuf_clients.clear()
     regbuf.client_ct = 0
     regbuf_queue.put(regbuf)
+
+    # TODO: do grouping work here
 
     grpdat_client_ct = grpdat.client_ct
     grpdat_ungrouped_clients = grpdat.ungrouped_clients
     grpdat_session_ct = grpdat.session_ct
-
-    # TODO: do grouping work here
 
     # send back status
     # grpdat.client_ct = grpdat_client_ct
@@ -473,8 +484,8 @@ def incoming_sort(
     # TODO: rn this allows for a user to create multiple client entries throughout
     # the process, including in multiple sessions. solution: just drop them when the intake client 
     # gets to session and refuse their connection for a while.
-    # TODO: forget one-way data. subprocesses are session data agnostic, so there is no reason
-    # to shove all of that through the pipes. Just have a sender thread. main process needs
+    # TODO: forget one-way data. subprocesses are mostly session data agnostic, so there is no
+    # reason to shove all of that through the pipes. Just have a sender thread. main process needs
     # more to do anyway
 
     error_cldata = CLData()
@@ -578,9 +589,24 @@ def incoming_buffer(
 # -----------------------------------------------------------------------------:process entry points
 # --------------------------------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------------------------:main
-
 def main():
+    while True:
+        try:
+            main_proc()
+        except KeyboardInterrupt:
+            for c in active_children():
+                c.kill()
+            return
+        except Exception as e:
+            # TODO dump exception to log
+            traceback.print_exc()
+            for c in active_children():
+                c.kill()
+        sleep(5)
+
+# ----------------------------------------------------------------------------------------:main proc
+
+def main_proc():
     udp_port = 7777
     udp_bufsize = 576
     tcp_port = 17777
@@ -624,27 +650,27 @@ def main():
             udp_socket,
             tcp_socket,
             resp_queue,
-            incsort_handler_pipes_rem[i], 
+            incsort_handler_pipes_rem[i],
             main_handler_pipes_rem[i],
             max_sessions,
             subproc_ct
-        ) 
+        )
         for i in range(subproc_ct)
     )
     incsort_args = [
         (
-            udp_socket, 
+            udp_socket,
             tcp_socket,
             regbuf_queue,
             grpdat if i == 0 else None,
             resp_queue,
-            connect_log, 
+            connect_log,
             connect_lock,
             incsort_handler_pipes_loc[i],
             incoming,
             incoming_lock,
             True if i == 0 else False
-        ) 
+        )
         for i in range(subproc_ct)
     ]
     incbuf_args = (udp_socket, tcp_socket, incoming, buffer_size)
@@ -653,45 +679,37 @@ def main():
     incsort_t = [Thread(target=incoming_sort, args=incsort_args[i]) for i in range(subproc_ct)]
     incbuf_t = Thread(target=incoming_buffer, args=incbuf_args)
 
-    try:
-        incbuf_t.start()
-        for i in range(subproc_ct):
-            incsort_t[i].start()
-            handlers[i].start()
-        ip_turnover_ctr = 0
+    incbuf_t.start()
+    for i in range(subproc_ct):
+        incsort_t[i].start()
+        handlers[i].start()
+    ip_turnover_ctr = 0
 
-        # optimization, avoids dict lookups
-        connect_log_turnover = connect_log.turnover
-        connect_lock_acquire = connect_lock.acquire
-        connect_lock_release = connect_lock.release
+    # optimization, avoids dict lookups
+    connect_log_turnover = connect_log.turnover
+    connect_lock_acquire = connect_lock.acquire
+    connect_lock_release = connect_lock.release
 
-        prev_time = time()
+    prev_time = time()
 
-        print(f'UDP STUN & TURN server running on {local_ip}:{udp_port}')
-        while True:
+    print(f'UDP STUN & TURN server running on {local_ip}:{udp_port}')
+    while True:
 
-            # -- drop stale connections periodically --
-            
-            new_time = time()
-            ip_turnover_ctr += new_time - prev_time
-            prev_time = new_time
-            if ip_turnover_ctr >= ip_turnover_update:
-                connect_lock_acquire()
-                dropped = connect_log_turnover()
-                connect_lock_release()
-                for pipe in main_handler_pipes_loc:
-                    pipe.send(dropped)
-                ip_turnover_ctr = 0
+        # -- drop stale connections periodically --
 
-    except KeyboardInterrupt:
-        for c in active_children():
-            c.kill()
-    except Exception as e:
-        traceback.print_exc()
-        for c in active_children():
-            c.kill()
+        new_time = time()
+        ip_turnover_ctr += new_time - prev_time
+        prev_time = new_time
+        if ip_turnover_ctr >= ip_turnover_update:
+            connect_lock_acquire()
+            dropped = connect_log_turnover()
+            connect_lock_release()
+            for pipe in main_handler_pipes_loc:
+                pipe.send(dropped)
+            ip_turnover_ctr = 0
 
-# -----------------------------------------------------------------------------------:handle clients
+
+# -----------------------------------------------------------------------------------:secondary proc
 
 def handle_clients(
     udp_socket, 
