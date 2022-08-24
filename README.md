@@ -1,28 +1,28 @@
-# Matchmaking Turn Server
+# MYM: Meet Your Match
 
-<p>A (currently in the works) fast, multi-session TURN server and clients for python, Unreal and Unity. Provides easy pre-grouped or automatic matchmaking and online multiplayer. Also will support arbitrary data transfers over TCP and UDP as well as a bunch of customizability and admin options.</p>
+<p>A (currently in the works) simple, fast, multi-session STUN and TURN server with direct support for python, Unreal and GameMaker clients. Provides easy pre-grouped or automatic matchmaking and online multiplayer support. Supports a larger number of clients by connecting clients directly to each other, removing computational and network load away from the server.</p>
 
 <h2>Overview</h2>
 <h3>Setup</h3>
 <ol>
-  <li>Copy turnserver.py onto a remote hosting server. It doesn't need to be a monster - a budget server from Contabo or Vultr will work.</li>
-  <li>Either install the Unreal/Unity plugin or see client.py for interfacing with the server from home via python.</li>
-  <li>Run turnserver.py.</li>
-  <li>Your game/application can now connect with other clients! </li>
+  <li>Rent a server.</li>
+  <li>Copy turnserver.py onto the server.</li>
+  <li>Either install the game engine plugin or see client.py for use with python.</li>
+  <li>Read the forthcoming documentation and connect your game's code to the plugin.</li>
+  <li>Run matchmaker.py on the server.</li>
+  <li>Your game/application can now connect with other clients!</li>
 </ol>
-<p>Detailed installation and usage instructions below.</p>
+<p>Detailed installation and usage instructions coming once the project is ready.</p>
 
 <h3>Pros:</h3>
 <ul>
-  <li>Cheap</li>
-  <li>Anonymous connections - functions as a VPN</li>
-  <li>Multiple sessions, many clients per session.</li>
+  <li>Inexpensive compared to dedicated server hosting.</li>
+  <li>Many sessions, many clients per session are both possible.</li>
   <li>Matchmaking included - no need to code it yourself.</li>
-  <li>Customizability - file transfers, streaming, games, apps... all at once!</li>
+  <li>Customizability - use as a VPN, or use it for games or apps!</li>
   <li>Ease of use - simple interface and no lengthy server build/deploy loop.</li>
 </ul>
 <h3>Cons:</h3>
 <ul>
-  <li>Higher latency than a dedicated game server.</li>
-  <li>All session traffic goes the host device's network.</li>
+  <li>Often higher latency than a dedicated game server - depends on host connection.</li>
 </ul>
