@@ -1,5 +1,6 @@
 old/*
 .idea/*
+__pycache__/*
 log.txt
 url.txt
 secret_key.txt

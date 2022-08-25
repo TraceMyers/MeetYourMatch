@@ -4,7 +4,9 @@ from sys import argv
 from time import time, sleep
 import socket
 from struct import pack, unpack
+from collections import deque
 import traceback
+from constants import *
 
 # NOTE: the use of ':' before each section name allows for easy section searching
 # NOTE: another architecture I thought of when waking: multi-headed with end-to-end recv & send
@@ -29,88 +31,6 @@ import traceback
 # TODO: TURN latency gauging - handle per regular update
 # TODO: send_bytes() and recv_bytes() shaved off 10-20ms per 10,000 packets
 
-# --------------------------------------------------------------------------------------------------
-# ----------------------------------------------------------------------------------------:constants
-# --------------------------------------------------------------------------------------------------
-
-# -------------------------------------------------------------------------------------------:status
-
-STATUS_NONE                 = 0x0000
-STATUS_REG_CLIENT           = 0x0001
-STATUS_REG_MASK             = STATUS_REG_CLIENT
-STATUS_REG_HOST             = 0x0003
-STATUS_REG_CLIENT_KNOWNHOST = 0x0005
-STATUS_REG_HOST_KNOWNHOST   = 0x0007
-STATUS_GROUPING             = 0x0008
-STATUS_HOST_PREPARING       = 0x000a
-STATUS_HOST_READY           = 0x000c
-STATUS_CLIENT_WAITING       = 0x000e
-STATUS_CLIENT_JOINING       = 0x0010
-STATUS_TRANSFER             = 0x0080
-STATUS_TRANSFER_MASK        = STATUS_TRANSFER
-STATUS_TRANSFER_NO_DATA     = 0x00a0
-STATUS_TRANSFER_AGAIN       = 0x00c0
-
-ERROR_MASK                  = 0xff00
-ERROR_DATA_FORMAT           = 0x0100
-ERROR_REGISTER_FAIL         = 0x0200
-ERROR_INTAKE_MAXED          = 0x0300
-ERROR_TRANSFERS_MAXED       = 0x0400
-ERROR_NO_SESSION            = 0x0500
-ERROR_NO_CLIENT             = 0x0600
-ERROR_NO_PARTNER            = 0x0700
-ERROR_BAD_STATUS            = 0x0800
-ERROR_FAST_POLL_RATE        = 0x0900
-ERROR_IP_LOG_MAXED          = 0x0a00
-ERROR_CLIENT_LOG_MAXED      = 0x0b00
-ERROR_NO_HOST               = 0x0c00
-ERROR_HOST_NAME_TAKEN       = 0x0d00
-ERROR_SESSION_MAXED         = 0x0e00
-ERROR_SESSIONS_MAXED        = 0x0f00
-ERROR_ALREADY_REGISTERED    = 0x1000
-
-COM_STUN = 0
-COM_TURN = 1
-COM_MIXD = 2
-
-# --------------------------------------------------------------------------------------------:flags
-
-# any client options
-CL_ENCRYPTED            = 0x0001    # passed along to inform receivers of my data that some or all
-                                    # of the data is encrypted; clients figure out the rest
-CL_LAT_MAX_LOW          = 0x0002
-CL_LAT_MAX_MID          = 0x0003
-CL_LAT_MAX_OOF          = 0x0004
-# host options
-CL_SET_GROUP_SIZE       = 0x0002    # if hosting, override default group size of 2, pass group size
-                                    # in as first int16 in data
-# group options
-CL_RELAY_ONLY           = 0x0008    # session starts without preparing, waiting, joining, etc
-# admin options
-CL_ADMIN                = 0x0100            # password required for flags & CL_ADMIN > 0
-CL_UNLOCK_POLL_RATE     = 0x0200 | CL_ADMIN # unlock poll rate lock for this client
-CL_ONLY_MY_SESSIONS     = 0x0400 | CL_ADMIN # kick&refuse any client not connecting to my session
-CL_MULTI_SESSION        = 0x0800 | CL_ADMIN # allow this client to enter mutliple sessions
-CL_SET_PASSWORD         = 0x1000 | CL_ADMIN # set the admin password
-CL_ONLY_MY_TRAFFIC      = 0x2000 | CL_ADMIN # kick&refuse anybody but me
-CL_RESTORE_DEFAULTS     = 0x8000 | CL_ADMIN # turn off anything changed by flags (can be combined
-                                            # with other changes)
-
-# ----------------------------------------------------------------------------------:other constants
-
-SES_MAX = 400 # max number of sessions
-MAX_GROUP_SIZE = 16
-SES_CLIENT_MAX = SES_MAX * 2 # max number clients in all sessions
-GAP = b'\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0'
-DEFAULT_CLDATA = b'\x00\x00' * 221
-AVG_LATENCY_CT_MIN = 5 # minimum number of packets to gauge latency
-# used for grouping
-STUN_LOW_LAT = 70
-STUN_MID_LAT = 120
-STUN_OOF_LAT = 180
-TURN_LOW_LAT = 100
-TURN_MID_LAT = 180
-TURN_OOF_LAT = 300
 
 # --------------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------------------:classes
@@ -154,9 +74,10 @@ class ConnectionLog:
             entry_delta_time = time() - value
             if entry_delta_time > turnover_time:
                 dropped_ips.append(key)
-                del ip_log[key]
-                if key in ip_to_client:
-                    del ip_to_client[key]
+        for ip in dropped_ips:
+            del ip_log[ip]
+            if ip in ip_to_client:
+                del ip_to_client[ip]
         return dropped_ips
 
     def forget_client(self, ip_address):
@@ -180,7 +101,7 @@ class CLData:
 
     def unpacket_udp(self, data):
         self.status, self.flags, self.time_stamp, \
-            self.name, self.admin_key, self.client_data = unpack('<IHf10s16s444s', data)
+            self.name, self.admin_key, self.client_data = unpack('<IHf10s16s442s', data)
         self.name = self.name.decode()
         self.admin_key = self.admin_key.decode()
 
@@ -492,13 +413,21 @@ def handle_grouping(grpdat, regbuf_queue, grp_cldata, sessions_hostnames):
             client = grpdat_ungrouped_clients.pop(i)
             session_clients.append(client)
             session.client_ct += 1
-            iplist = [session.host.address[0], ]
+            host_address = session.host.address
+            iplists = ([host_address[0], ], [client.address[0], ])
             cldata_ctr = grp_cldata_iplist_add(
                 grp_cldata,
                 cldata_ctr,
                 STATUS_GROUPING,
                 client.address,
-                iplist
+                iplists[0]
+            )
+            cldata_ctr = grp_cldata_iplist_add(
+                grp_cldata,
+                cldata_ctr,
+                STATUS_GROUPING,
+                host_address,
+                iplists[1]
             )
         else:
             session_i += 1
@@ -638,9 +567,20 @@ def incoming_buffer(
 # --------------------------------------------------------------------------------------------------
 
 def main():
+    udp_port = 7777
+    udp_bufsize = 576
+    tcp_port = 17777
+    tcp_bufsize = 1500
+    local_ip = '192.168.0.203'
+    udp_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
+    udp_socket.bind((local_ip, udp_port))
+    tcp_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
+    tcp_socket.bind((local_ip, tcp_port))
+    # NOTE: currently just using udp
+    print(f'UDP STUN & TURN server running on {local_ip}:{udp_port}')
     while True:
         try:
-            main_proc()
+            main_proc(tcp_socket, udp_socket, udp_bufsize)
         except KeyboardInterrupt:
             for c in active_children():
                 c.kill()
@@ -654,33 +594,22 @@ def main():
 
 # ----------------------------------------------------------------------------------------:main proc
 
-def main_proc():
-    udp_port = 7777
-    udp_bufsize = 576
-    tcp_port = 17777
-    tcp_bufsize = 1500
-    local_ip = '192.168.0.203'
-    buffer_size = udp_bufsize
+def main_proc(tcp_socket, udp_socket, buffer_size):
     subproc_ct = 3
     ip_turnover_time = 15
     ip_turnover_update = 5
     max_poll_rate = 0.099
-    incoming = []
+    incoming = deque()
     max_sessions = 100
 
     connect_log = ConnectionLog(max_poll_rate, ip_turnover_time)
 
-    udp_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    udp_socket.bind((local_ip, udp_port))
-    tcp_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
-    tcp_socket.bind((local_ip, tcp_port))
-
-    incsort_handler_pipes = (Pipe() for _ in range(subproc_ct))
-    incsort_handler_pipes_rem = [pipe[0] for pipe in incsort_handler_pipes]
-    incsort_handler_pipes_loc = [pipe[1] for pipe in incsort_handler_pipes]
-    main_handler_pipes = (Pipe() for _ in range(subproc_ct))
-    main_handler_pipes_rem = [pipe[0] for pipe in main_handler_pipes]
-    main_handler_pipes_loc = [pipe[1] for pipe in main_handler_pipes]
+    incsort_handler_pipes = [Pipe() for _ in range(subproc_ct)]
+    incsort_handler_pipes_rem = [incsort_handler_pipes[i][0] for i in range(subproc_ct)]
+    incsort_handler_pipes_loc = [incsort_handler_pipes[i][1] for i in range(subproc_ct)]
+    main_handler_pipes = [Pipe() for _ in range(subproc_ct)]
+    main_handler_pipes_rem = [main_handler_pipes[i][0] for i in range(subproc_ct)]
+    main_handler_pipes_loc = [main_handler_pipes[i][1] for i in range(subproc_ct)]
     multi_manager = Manager()
     resp_queue = multi_manager.Queue() # apparently faster than multiprocessing.Queue
     regbuf_queue = multi_manager.Queue()
@@ -693,31 +622,31 @@ def main_proc():
     grpdat = GroupingData()
     regbuf_queue.put(central_regbuf)
 
-    handler_args = (
-        (
-            udp_socket,
-            tcp_socket,
-            resp_queue,
-            incsort_handler_pipes_rem[i],
-            main_handler_pipes_rem[i],
-            max_sessions,
-            subproc_ct
-        )
-        for i in range(subproc_ct)
-    )
-    incsort_args = [
+    handler_args = [
         (
             udp_socket,
             tcp_socket,
             regbuf_queue,
-            grpdat if i == 0 else None,
+            resp_queue,
+            grpdat if i == 0 else False,
+            incsort_handler_pipes_rem[i],
+            main_handler_pipes_rem[i],
+            max_sessions,
+            subproc_ct,
+            True if i == 0 else False
+        )
+        for i in range(subproc_ct)
+    ]
+    incsort_args = [
+        (
+            udp_socket,
+            tcp_socket,
             resp_queue,
             connect_log,
             connect_lock,
             incsort_handler_pipes_loc[i],
             incoming,
-            incoming_lock,
-            True if i == 0 else False
+            incoming_lock
         )
         for i in range(subproc_ct)
     ]
@@ -740,7 +669,6 @@ def main_proc():
 
     prev_time = time()
 
-    print(f'UDP STUN & TURN server running on {local_ip}:{udp_port}')
     while True:
 
         # -- drop stale connections periodically --
@@ -763,9 +691,9 @@ def handle_clients(
     udp_socket, 
     tcp_socket, 
     regbuf_queue,
+    resp_queue,
     grpdat,
-    resp_queue, 
-    client_pipe, 
+    client_pipe,
     drop_pipe, 
     max_sessions,
     subproc_ct,
@@ -786,6 +714,8 @@ def handle_clients(
     grpdat_turnover_ctr = 0
     grpdat_turnover_time = 4
     prev_time = time()
+
+    # TODO: switch back to having a registration & grouping process and two sesion processes
 
     # instantiating this twice before the first start() call so we can just use is_alive() without
     # a None check
@@ -848,8 +778,7 @@ def handle_clients(
                 # return error
                 pass
         else: # STATUS_GROUPING
-            # check on grouping process status
-            # update latency
+            # add to data structure handled by grouping process, pipe occasionally
             pass
 
         resp_key = resp_queue.get()
