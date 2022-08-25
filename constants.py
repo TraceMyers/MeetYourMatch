@@ -71,7 +71,7 @@ SES_MAX = 400 # max number of sessions
 MAX_GROUP_SIZE = 16
 SES_CLIENT_MAX = SES_MAX * 2 # max number clients in all sessions
 GAP = b'\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0'
-DEFAULT_CLDATA = b'\x00\x00' * 221
+DEFAULT_CLDATA = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' * 47
 AVG_LATENCY_CT_MIN = 5 # minimum number of packets to gauge latency
 # used for grouping
 STUN_LOW_LAT = 70
