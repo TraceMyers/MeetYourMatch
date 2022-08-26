@@ -19,6 +19,7 @@ STATUS_TRANSFER             = 0x0080
 STATUS_TRANSFER_MASK        = STATUS_TRANSFER
 STATUS_TRANSFER_NO_DATA     = 0x00a0
 STATUS_TRANSFER_AGAIN       = 0x00c0
+STATUS_KEEP_ALIVE           = 0x00d0
 
 ERROR_MASK                  = 0xff00
 ERROR_DATA_FORMAT           = 0x0100
@@ -68,7 +69,7 @@ CL_RESTORE_DEFAULTS     = 0x8000 | CL_ADMIN # turn off anything changed by flags
 # ----------------------------------------------------------------------------------:other constants
 
 SES_MAX = 400 # max number of sessions
-MAX_GROUP_SIZE = 16
+MAX_GROUP_SIZE = 6
 SES_CLIENT_MAX = SES_MAX * 2 # max number clients in all sessions
 GAP = b'\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0'
 DEFAULT_CLDATA = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' * 47
@@ -80,3 +81,4 @@ STUN_OOF_LAT = 180
 TURN_LOW_LAT = 100
 TURN_MID_LAT = 180
 TURN_OOF_LAT = 300
+ACCEPT_TRAFFIC_PORTS = (7777, 7778, 7779, 7780, 7781, 7782, 7783, 7784, 7785, 7786)
