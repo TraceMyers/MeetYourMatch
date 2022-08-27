@@ -36,7 +36,7 @@ statuses = [
     STATUS_REG_CLIENT, STATUS_REG_HOST
 ]
 _client_data = [
-    2, 0, 0, 0, 6, 6, 0, 0, 2, 0, 6
+    1, 0, 0, 0, 5, 5, 0, 0, 1, 0, 5
 ]
 _client_data = [game_size_bytes(item) for item in _client_data]
 
@@ -88,7 +88,7 @@ for client in clients:
 # DONE: (1) make and join named games
 # DONE: (2) multiple, varied size groups with host & join testing
 # TODO: (3) ping testing between clients
-# TODO: (4) drop communication & excecution between processes
+# TODO: (4) timeout communication & excecution between processes
 # TODO: (5) migration process from grouping to session
 # TODO: (6) sessions belong on separate process
 
