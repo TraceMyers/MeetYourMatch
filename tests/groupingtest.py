@@ -25,13 +25,13 @@ def game_size_bytes(ct, port):
     return int.to_bytes(ct, 1, 'little') + get_packed_nat_url(port) + b'\0' * 461
 
 # instantiate
-# server_url = local_url
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect(('8.8.8.8', 80))
 nat_url = s.getsockname()[0]
 s.shutdown(socket.SHUT_RDWR)
 s.close()
-server_url = '154.12.226.174'
+# server_url = '154.12.226.174'
+server_url = nat_url
 client_port = 7782
 remote_ports = [7777, 7778, 7779]
 buffer_size = 1024
@@ -137,7 +137,7 @@ DEFAULT_T_CLIENT_DATA = b'0' * 468
 
 def listen(_socket, print_lock, names, recbuf, i):
     try:
-        server_update_time = 5
+        server_update_time = 7
         t_host_pings = local()
         t_host_pings = {}
         t_retname = local()
@@ -176,7 +176,7 @@ def listen(_socket, print_lock, names, recbuf, i):
                 # print(f'retname: {t_retname} | {type(t_retname)}')
                 # print(f'admin_key: {admin_key} | {type(admin_key)}')
 
-            if t_server_update_ctr > server_update_time and t_status != STATUS_NONE:
+            if t_server_update_ctr > server_update_time:
                 t_status = STATUS_GROUPING
                 if len(t_host_pings.keys()) > 0:
                     t_flags |= CL_ADDRESSES_LATENCIES
@@ -186,10 +186,10 @@ def listen(_socket, print_lock, names, recbuf, i):
                 t_cl_data = pack('<2Id12s16s464s', t_status, t_flags, t_time_stamp, names[i], admin_key, t_client_data)
                 _socket.sendto(t_cl_data, choice(server_locs))
                 t_flags = 0x0000
-                p_status = STATUS_PING
+                p_status = STATUS_PORT_OPEN
                 t_cl_data = pack('<2Id12s16s464s', p_status, t_flags, t_time_stamp, names[i], admin_key, t_client_data)
                 for server_loc in server_locs:
-                    sleep(0.1)
+                    sleep(0.11)
                     _socket.sendto(t_cl_data, server_loc)
                 t_server_update_ctr = 0
             if t_status == STATUS_NONE:
@@ -197,7 +197,6 @@ def listen(_socket, print_lock, names, recbuf, i):
             if t_status == STATUS_PING:
                 # print(f'{names[i].decode()} got pinged from {t_retname.decode()}')
                 t_status = STATUS_PINGBACK
-                t_time_stamp = time()
                 t_cl_data = pack('<2Id12s16s464s', t_status, t_flags, t_time_stamp, names[i], admin_key, t_client_data)
                 _socket.sendto(t_cl_data, t_msg[1])
                 t_status = STATUS_NONE
@@ -213,28 +212,28 @@ def listen(_socket, print_lock, names, recbuf, i):
                 if t_status == STATUS_LATCHECK_HOST:
                     # print(f'{names[i].decode()} recieved message from {t_retname.decode()}')
                     t_group_data, t_iplist_data = parse_client_data(t_client_data)
-                    if len(t_group_data) > 0:
-                        print(f'group: {t_group_data}')
+                    # if len(t_group_data) > 0:
+                    #     print(f'group: {t_group_data}')
                     if len(t_iplist_data) > 0:
-                        print(f'iplist: {t_iplist_data}')
+                        # print(f'iplist: {t_iplist_data}')
                         for ip_item in t_iplist_data:
                             t_status = STATUS_PORT_OPEN
                             t_cl_data = pack('<2Id12s16s464s', t_status, t_flags, t_time_stamp, names[i], admin_key, t_client_data)
                             _socket.sendto(t_cl_data, ip_item)
                     t_status = STATUS_NONE
                 elif t_status == STATUS_LATCHECK_CLIENT:
-                    print(f'{names[i].decode()} recieved message from {t_retname.decode()}')
+                    # print(f'{names[i].decode()} recieved message from {t_retname.decode()}')
                     _, t_iplist_data = parse_client_data(t_client_data)
                     if len(t_iplist_data) > 0:
-                        print(f'iplist: {t_iplist_data}')
+                        # print(f'iplist: {t_iplist_data}')
                         for ip_item in t_iplist_data:
                             t_status = STATUS_PING
                             t_time_stamp = time()
                             t_cl_data = pack('<2Id12s16s464s', t_status, t_flags, t_time_stamp, names[i], admin_key, t_client_data)
                             _socket.sendto(t_cl_data, ip_item)
                     t_status = STATUS_NONE
-                else:
-                    print(f'bad status: {hex(t_status)}')
+                # else:
+                #     print(f'bad status: {hex(t_status)}')
     except KeyboardInterrupt:
         return
 
