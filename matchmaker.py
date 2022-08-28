@@ -800,7 +800,7 @@ def main_incoming_sort(
         # TODO: handle admin key and flags on cldata
 
         remote_status = cldata.status
-        if remote_status == STATUS_PING:
+        if remote_status == STATUS_PORT_OPEN:
             # client is pinging server ports to keep nat table listings
             continue
         if remote_status & STATUS_REG_MASK:
@@ -810,7 +810,7 @@ def main_incoming_sort(
                 success = set_client_ct(cldata, client)
                 if not success:
                     error_cldata.status = ERROR_BAD_GROUP_SIZE
-                    error_cldata.time_stamp = get_timestamp()
+                    error_cldata.time_stamp = time()
                     key = resp_queue_get()
                     udp_socket_sendto(pack_udp(error_cldata), ip_address)
                     resp_queue_put(key)
@@ -823,12 +823,12 @@ def main_incoming_sort(
             connect_lock_release()
             if client is None:
                 error_cldata.status = ERROR_NO_CLIENT
-                error_cldata.time_stamp = get_timestamp()
+                error_cldata.time_stamp = time()
                 key = resp_queue_get()
                 udp_socket_sendto(pack_udp(error_cldata), ip_address)
                 resp_queue_put(key)
             elif remote_status <= STATUS_JOIN_SESSION:
-                client.latency = get_timestamp() - cldata.time_stamp
+                client.latency = time() - cldata.time_stamp
                 client.status = remote_status
                 if remote_status == STATUS_GROUPING and cldata.flags & CL_ADDRESSES_LATENCIES:
                     unpack_lock.acquire()
@@ -836,8 +836,8 @@ def main_incoming_sort(
                     unpack_lock.release()
                 handler_pipe_send(client)
             else:
-                error_cldata.status |= ERROR_BAD_STATUS
-                error_cldata.time_stamp = get_timestamp()
+                error_cldata.status = ERROR_BAD_STATUS
+                error_cldata.time_stamp = time()
                 key = resp_queue_get()
                 udp_socket_sendto(pack_udp(error_cldata), ip_address)
                 resp_queue_put(key)
