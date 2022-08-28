@@ -20,14 +20,16 @@ def game_size_bytes(ct):
     return int.to_bytes(ct, 1, 'little') + b'\0' * 467
 
 # instantiate
-url = '192.168.0.203'
+# server_url = '154.12.226.174'
+local_url = '192.168.0.203'
+server_url = '192.168.0.203'
 client_port = 7782
 remote_ports = [7777, 7778, 7779]
 buffer_size = 1024
 flags = 0
 time_stamp = 0
 admin_key = b'\0' * 16
-server_locs = [(url, remote_ports[i]) for i in range(len(remote_ports))]
+server_locs = [(server_url, remote_ports[i]) for i in range(len(remote_ports))]
 sockets = [socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) for _ in range(7)]
 names = [
     'Travis', 'Duncan', 'Reshawn', 'Denise', 'Scooter', 'Jason', 'Jason', 'Mishmash!',
@@ -45,7 +47,7 @@ _client_data = [game_size_bytes(item) for item in _client_data]
 # init & processing
 for i in range(len(sockets)):
     _socket = sockets[i]
-    _socket.bind((url, client_port + i))
+    _socket.bind((local_url, client_port + i))
 names = [byte_name(name) for name in names]
 
 
@@ -154,6 +156,12 @@ def listen(_socket, print_lock, names, recbuf, i):
             if len(recbuf[names[i]]) > 0:
                 t_msg = recbuf[names[i]].popleft()
                 t_status, t_flags, t_time_stamp, t_retname, admin_key, t_client_data = unpack('<2Id12s16s464s', t_msg[0])
+                print(f'status: {t_status} | {type(t_status)}')
+                print(f'flags: {t_flags} | {type(t_flags)}')
+                print(f'time: {t_time_stamp} | {type(t_time_stamp)}')
+                print(f'retname: {t_retname} | {type(t_retname)}')
+                print(f'admin_key: {admin_key} | {type(admin_key)}')
+                input()
 
             if t_server_update_ctr > server_update_time:
                 t_status = STATUS_GROUPING
@@ -168,7 +176,7 @@ def listen(_socket, print_lock, names, recbuf, i):
                 p_status = STATUS_PING
                 t_cl_data = pack('<2Id12s16s464s', p_status, t_flags, t_time_stamp, names[i], admin_key, t_client_data)
                 for server_loc in server_locs:
-                    sleep(0.001)
+                    sleep(0.1)
                     _socket.sendto(t_cl_data, server_loc)
                 t_server_update_ctr = 0
             if t_status == STATUS_NONE:
@@ -212,13 +220,14 @@ def listen(_socket, print_lock, names, recbuf, i):
                             t_cl_data = pack('<2Id12s16s464s', t_status, t_flags, t_time_stamp, names[i], admin_key, t_client_data)
                             _socket.sendto(t_cl_data, ip_item)
                     t_status =STATUS_NONE
+            sleep(3)
     except KeyboardInterrupt:
         return
 
 print_lock = Lock()
 clients = []
 recbuf = {n:deque() for n in names}
-for i in range(len(sockets)):
+for i in range(len(sockets[0:1])):
     _socket = sockets[i]
     name = names[i]
     _status = statuses[i]
@@ -234,7 +243,7 @@ for i in range(len(sockets)):
     myrec = Thread(target=server_com_t, args=(_socket, recbuf, names[i]))
     myrec.start()
     client_t.start()
-    sleep(0.03)
+    sleep(3)
 
 for client in clients:
     if client.is_alive():
