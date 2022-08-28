@@ -40,6 +40,10 @@ from constants import *
 #       in order to maintain the connections and continue to recieve from those ports AND it should
 #       be spacing them out to come out over the max poll rate
 # TODO: CLData variables need a new naming convention. It's awful
+# TODO: important point once redoing the architecture to separate register, matchmaking
+#       and session servers: consider that both the registration and matchmaking servers
+#       need to heavily priorize computation over communication, which might lead to simplification
+#       of their comms
 
 # --------------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------------------:classes
@@ -225,10 +229,6 @@ class Session:
 
 # ------------------------------------------------------------------------------------------:packing
 
-def get_timestamp():
-    return time() * 1000 % 10000000 # milliseconds for single-precision float packing
-
-
 def pack_udp(cl_data):
     return pack(
         f'<2Id12s16s464s',
@@ -247,22 +247,34 @@ def pack_tcp(cl_data):
 
 
 def set_client_ct(cldata, client):
-    client.client_ct = cldata.client_data[0]
-    return 1 <= client.client_ct <= MAX_CLIENT_CT
+    try:
+        client.client_ct = cldata.client_data[0]
+        return 1 <= client.client_ct <= MAX_CLIENT_CT
+    except:
+        return MAX_CLIENT_CT
+        # Epic GameJam temp
 
 
 def set_local_ip(cldata, client):
-    data = unpack('4BH', cldata.client_data[1:7])
-    client.local_address = ('.'.join([str(num) for num in data[:4]]), data[4])
+    try:
+        data = unpack('4BH', cldata.client_data[1:7])
+        client.local_address = ('.'.join([str(num) for num in data[:4]]), data[4])
+    except:
+        pass
+        # Epic GameJam temp
 
 
 def unpack_host_latency_info(cldata, client):
-    client_data = cldata.client_data
-    address_ct = client_data[0]
-    for i in range(1, address_ct * 16 + 1, 16):
-        data = unpack('4BHd', client_data[i:i+16])
-        address_tup = ('.'.join([str(num) for num in data[0:4]]), data[4])
-        client.host_latencies[address_tup] = data[5]
+    try:
+        client_data = cldata.client_data
+        address_ct = client_data[0]
+        for i in range(1, address_ct * 16 + 1, 16):
+            data = unpack('4BHd', client_data[i:i+16])
+            address_tup = ('.'.join([str(num) for num in data[0:4]]), data[4])
+            client.host_latencies[address_tup] = data[5]
+    except:
+        pass
+        # Epic GameJam temp
 
 # -----------------------------------------------------------------------------------------:register
 

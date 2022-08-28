@@ -30,8 +30,8 @@ s.connect(('8.8.8.8', 80))
 nat_url = s.getsockname()[0]
 s.shutdown(socket.SHUT_RDWR)
 s.close()
-# server_url = '154.12.226.174'
-server_url = nat_url
+server_url = '154.12.226.174'
+# server_url = nat_url
 client_port = 7782
 remote_ports = [7777, 7778, 7779]
 buffer_size = 1024
@@ -39,18 +39,26 @@ flags = 0
 time_stamp = 0
 admin_key = b'\0' * 16
 server_locs = [(server_url, remote_ports[i]) for i in range(len(remote_ports))]
-sockets = [socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) for _ in range(5)]
+sockets = [socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) for _ in range(11)]
 names = [
-    'Travis', 'Duncan', 'Reshawn', 'Denise', 'Scooter', 'Jason', 'Jason', 'Mishmash!',
+    'Travis', 'Duncan', 'Reshawn', 'Denise', 'Duncan', 'Jason', 'Jason', 'Mishmash!',
     'Skeeter', 'Newsy', 'Breezy'
 ]
 statuses = [
-    STATUS_REG_HOST, STATUS_REG_CLIENT, STATUS_REG_CLIENT, STATUS_REG_CLIENT, STATUS_REG_CLIENT,
-    STATUS_REG_HOST_KNOWNHOST, STATUS_REG_CLIENT_KNOWNHOST, STATUS_REG_HOST, STATUS_REG_CLIENT,
-    STATUS_REG_CLIENT, STATUS_REG_CLIENT
+    STATUS_REG_HOST, 
+    STATUS_REG_HOST_KNOWNHOST, 
+    STATUS_REG_CLIENT, 
+    STATUS_REG_CLIENT, 
+    STATUS_REG_CLIENT_KNOWNHOST,
+    STATUS_REG_HOST_KNOWNHOST, 
+    STATUS_REG_CLIENT_KNOWNHOST, 
+    STATUS_REG_HOST, 
+    STATUS_REG_CLIENT,
+    STATUS_REG_CLIENT, 
+    STATUS_REG_CLIENT
 ]
 _client_data = [
-    3, 0, 0, 0, 5, 5, 3, 5, 1, 0, 5
+    3, 3, 0, 0, 5, 5, 3, 5, 1, 0, 5
 ]
 _client_data = [game_size_bytes(_client_data[i], client_port + i) for i in range(len(_client_data))]
 
