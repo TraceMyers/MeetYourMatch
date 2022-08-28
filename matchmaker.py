@@ -577,11 +577,13 @@ def grp_rem_session(grpdat, session, drop_host=True, drop_clients=True):
     grpdat.sessions.remove(session)
     for client in session.clients:
         client.session = None
-        if drop_clients:
+        if drop_clients and client.address in grpdat.addresses:
             del grpdat.addresses[client.address]
     if drop_host:
-        del grpdat.addresses[host.address]
-        grpdat.clients.remove(host)
+        if host.address in grpdat.addresses:
+            del grpdat.addresses[host.address]
+        if host in grpdat.clients:
+            grpdat.clients.remove(host)
     else:
         host.session = None
 
@@ -589,12 +591,17 @@ def grp_rem_session(grpdat, session, drop_host=True, drop_clients=True):
 def grp_rem_client(grpdat, client, drop=True, session=None):
     client_address = client.address
     if session:
-        session.addresses.remove(client_address)
-        session.clients.remove(client)
-        client.session = None
+        if client_address in session.addresses:
+            session.addresses.remove(client_address)
+        if client in session.clients:
+            session.clients.remove(client)
     if drop:
-        del grpdat.addresses[client_address]
-        grpdat.clients.remove(client)
+        if client.address in grpdat.addresses:
+            del grpdat.addresses[client_address]
+        if client in grpdat.clients:
+            grpdat.clients.remove(client)
+    else:
+        client.session = None
 
 
 def grp_hostname_index(hostnames, session_ct, name):

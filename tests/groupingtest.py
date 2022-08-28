@@ -26,13 +26,13 @@ def game_size_bytes(ct, port):
 
 # instantiate
 local_url = '192.168.0.203'
-server_url = local_url
+# server_url = local_url
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect(('8.8.8.8', 80))
 nat_url = s.getsockname()[0]
 s.shutdown(socket.SHUT_RDWR)
 s.close()
-# server_url = '154.12.226.174'
+server_url = '154.12.226.174'
 client_port = 7782
 remote_ports = [7777, 7778, 7779]
 buffer_size = 1024
