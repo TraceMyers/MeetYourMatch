@@ -39,6 +39,7 @@ from constants import *
 # TODO: clients need to ping server every 7.4 seconds or so on whatever ports they aren't sending to
 #       in order to maintain the connections and continue to recieve from those ports AND it should
 #       be spacing them out to come out over the max poll rate
+# TODO: CLData variables need a new naming convention. It's awful
 
 # --------------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------------------:classes
@@ -101,14 +102,14 @@ class CLData:
     def __init__(self):
         self.status = STATUS_NONE           # 4
         self.flags = 0                      # 4
-        self.time_stamp = 0                 # 4
-        self.name = 'JoeErrname'            # 12
+        self.time_stamp = 0                 # 8
+        self.name = 'JoeSevere!'            # 12
         self.admin_key = None               # 16
-        self.client_data = b''              # 468 (udp) -> 508 total
+        self.client_data = b''              # 464 (udp) -> 508 total
 
     def unpacket_udp(self, data):
         self.status, self.flags, self.time_stamp, self.name, \
-            self.admin_key, self.client_data = unpack('<2If12s16s468s', data)
+            self.admin_key, self.client_data = unpack('<2Id12s16s464s', data)
         self.name = self.name.decode()
         self.admin_key = self.admin_key.decode()
 
@@ -222,12 +223,12 @@ class Session:
 # ------------------------------------------------------------------------------------------:packing
 
 def get_timestamp():
-    return time.time() * 1000 % 10000000 # milliseconds for single-precision float packing
+    return time() * 1000 % 10000000 # milliseconds for single-precision float packing
 
 
 def pack_udp(cl_data):
     return pack(
-        f'<2If12s16s468s',
+        f'<2Id12s16s464s',
         cl_data.status, cl_data.flags, cl_data.time_stamp, 
         bytes(cl_data.name, 'utf-8'), GAP, cl_data.client_data
     )
@@ -236,7 +237,7 @@ def pack_udp(cl_data):
 def pack_tcp(cl_data):
     # TODO: recalculate client_data size
     return pack(
-        f'<2If12s16s1312s',
+        f'<2Id12s16s1308s',
         cl_data.status, cl_data.flags, cl_data.time_stamp, 
         bytes(cl_data.name, 'utf-8'), GAP, cl_data.client_data
     )
@@ -250,10 +251,10 @@ def set_client_ct(cldata, client):
 def unpack_host_latency_info(cldata, client):
     client_data = cldata.client_data
     address_ct = client_data[0]
-    for i in range(1, address_ct * 10 + 1, 10):
-        numbers = unpack('4BHf', client_data[i:i+10])
-        address_tup = ('.'.join([str(num) for num in numbers[:4]], numbers[4]))
-        client[address_tup] = numbers[5]
+    for i in range(1, address_ct * 16 + 1, 16):
+        data = unpack('4BHd', client_data[i:i+16])
+        address_tup = ('.'.join([str(num) for num in data[0:4]]), data[4])
+        client.host_latencies[address_tup] = data[5]
 
 # -----------------------------------------------------------------------------------------:register
 
@@ -331,7 +332,7 @@ def grp_merge_regbuf(
                         grp_cldata_add(grp_cldata, cldata_ctr, ERROR_SESSION_MAXED, address)
                     continue
                 # TODO: password check; just have default password None
-                grp_pack_iplist(grp_cldata, [session.host.address, ])
+                grp_pack_iplist(grp_cldata[cldata_ctr], [session.host.address, ])
                 cldata_ctr = grp_cldata_add(
                     grp_cldata,
                     cldata_ctr,
@@ -350,11 +351,12 @@ def grp_merge_regbuf(
 def grp_latcheck(grpdat, client, cldata_list, cldat_i):
     host_addresses = [session.host.address for session in grpdat.sessions]
     ungrouped_addresses = []
-    for client in grpdat.clients:
-        if not client.session:
-            ungrouped_addresses.append(client.address)
+    for c in grpdat.clients:
+        if not c.session:
+            ungrouped_addresses.append(c.address)
     if client.address in grpdat.addresses:
         grpclient = grpdat.addresses[client.address]
+        grpclient.name = client.name
         if grpclient.session is None:
             grpclient.host_latencies = {**grpclient.host_latencies, **client.host_latencies}
             grp_pack_iplist(cldata_list[cldat_i], host_addresses)
@@ -390,7 +392,7 @@ def grp_latcheck(grpdat, client, cldata_list, cldat_i):
                 if session.locked:
                     grp_pack_iplist(cldata_list[cldat_i], [session.host.address, ])
                     cldat_i = grp_cldata_add(
-                        cldata_list[cldat_i],
+                        cldata_list,
                         cldat_i,
                         STATUS_JOIN_SESSION,
                         client.address
@@ -398,11 +400,11 @@ def grp_latcheck(grpdat, client, cldata_list, cldat_i):
                 else:
                     group = [group_host, ]
                     for c in session.clients:
-                        if c.adress != client.address:
+                        if c.address != client.address:
                             group.append((c.name, c.address))
                     grp_pack_group(cldata_list[cldat_i], group)
                     cldat_i = grp_cldata_add(
-                        cldata_list[cldat_i],
+                        cldata_list,
                         cldat_i,
                         STATUS_IN_GROUP,
                         client.address
@@ -421,7 +423,7 @@ def grp_lock_session(grpdat, host, cldata, cldat_i):
             session.locked = True
             if len(session.clients) > 0:
                 group = [(c.name, c.address) for c in session.clients]
-                grp_pack_group(cldata, group)
+                grp_pack_group(cldata[cldat_i], group)
                 cldat_i = grp_cldata_add(
                     cldata,
                     cldat_i,
@@ -450,7 +452,7 @@ def grp_cldata_add(cldata_list, cldata_i, status, address):
 def grp_pack_group(cldata, group):
     # groups are 18 bytes per member: 6 for IP/port, 12 for name
     # group format is list((name1,ip/port1), ...)
-    cur_len_bytes = len(cldata.client_data)
+    cur_len_bytes = len(cldata[0].client_data)
     max_len = MAX_GROUP_PACK - (cur_len_bytes // 18) - 1 # null terminated & prefixed
     byte_str = b'000001'
     ctr = 0
@@ -464,13 +466,13 @@ def grp_pack_group(cldata, group):
                    + int.to_bytes(address[1], 2, 'little')
         byte_str += pack('12s6s', name.encode(), ip_bytes)
         ctr += 1
-    cldata.client_data += byte_str + b'000009'
+    cldata[0].client_data += byte_str + b'000009'
 
 
 def grp_pack_iplist(cldata, iplist):
     # IPs are 6 bytes: 4 for IP and 2 for port
     len_iplist = len(iplist)
-    cur_len_bytes = len(cldata.client_data)
+    cur_len_bytes = len(cldata[0].client_data)
     max_len = MAX_IP_PACK - (cur_len_bytes // 6) - 2 # null terminated & prefixed
     if max_len > 0:
         if len_iplist > max_len:
@@ -489,7 +491,7 @@ def grp_pack_iplist(cldata, iplist):
             ip_ct = len_iplist
         ip_bytes = b''.join(address_byte_list)
         byte_ct = ip_ct * 6
-        cldata.client_data += b'000002' + pack(f'{byte_ct}s', ip_bytes) + b'000009'
+        cldata[0].client_data += b'000002' + pack(f'{byte_ct}s', ip_bytes) + b'000009'
     else:
         print('ERROR matchmaker.py grp_pack_iplist():: tried to pack but not enough space')
 
@@ -497,7 +499,7 @@ def grp_pack_iplist(cldata, iplist):
 def grp_null_pack(cldata):
     cur_len_bytes = len(cldata.client_data)
     null_pack_ct = MAX_IP_PACK - (cur_len_bytes // 6)
-    null_pack = b'\0\0\0\0\0\0' * null_pack_ct
+    null_pack = b'000000' * null_pack_ct
     cldata.client_data += null_pack
 
 
@@ -506,7 +508,7 @@ def grp_add_client(grpdat, client, session=None):
     grpdat.addresses[client.address] = client
     client.session = session
     if session is not None:
-        session.clients.add(client)
+        session.clients.append(client)
         session.addresses.add(client.address)
 
 
@@ -559,8 +561,8 @@ def grp_hostname_index(hostnames, session_ct, name):
 # ------------------------------------------------------------------------------:thread entry points
 # --------------------------------------------------------------------------------------------------
 
-def grp_handle(grpdat, regbuf_queue, grp_cldata, delta_time, grpdat_lock, resp_queue, udp_socket):
-    grpdat_lock.acquire()
+def grp_handle(grp_queue, regbuf_queue, grp_cldata, delta_time, resp_queue, udp_socket):
+    grpdat = grp_queue.get()
     cldata_ctr = 0
     # TODO: would be better to check a shared memory value
     regbuf = regbuf_queue.get()
@@ -596,7 +598,8 @@ def grp_handle(grpdat, regbuf_queue, grp_cldata, delta_time, grpdat_lock, resp_q
     for client in grpdat_clients:
         client.connect_ctr += delta_time
         if client.session is not None:
-            if client.connect_ctr > CONNECT_TURNOVER_HOST:
+            if client.connect_ctr > CONNECT_TURNOVER_HOST \
+            and client.session.host.address == client.address:
                 grp_rem_session(grpdat, client.session)
                 cldata_ctr = grp_cldata_add(
                     grp_cldata,
@@ -605,7 +608,7 @@ def grp_handle(grpdat, regbuf_queue, grp_cldata, delta_time, grpdat_lock, resp_q
                     client.address
                 )
             continue
-        if client.connect_ctr > CONNECT_TURNOVER:
+        elif client.connect_ctr > CONNECT_TURNOVER:
             grp_rem_client(grpdat, client)
             cldata_ctr = grp_cldata_add(
                 grp_cldata,
@@ -635,7 +638,7 @@ def grp_handle(grpdat, regbuf_queue, grp_cldata, delta_time, grpdat_lock, resp_q
             and host_address in client.host_latencies \
             and client.host_latencies[host_address] < LATCHECK[client.lat_status]:
                 grp_add_client_to_session(client, session)
-                grp_pack_iplist(grp_cldata, [host_address, ])
+                grp_pack_iplist(grp_cldata[cldata_ctr], [host_address, ])
                 cldata_ctr = grp_cldata_add(
                     grp_cldata,
                     cldata_ctr,
@@ -643,7 +646,7 @@ def grp_handle(grpdat, regbuf_queue, grp_cldata, delta_time, grpdat_lock, resp_q
                     client.address
                 )
                 break
-    grpdat_lock.release()
+    grp_queue.put(grpdat)
 
     resp_key = resp_queue.get()
     for cldata_tup in grp_cldata:
@@ -665,7 +668,8 @@ def main_incoming_sort(
     connect_lock,
     handler_pipe,
     incoming,
-    incoming_lock
+    incoming_lock,
+    unpack_lock
 ):
     """
     Parse socket messages, log connections, handle flags, send back some errors, and
@@ -726,16 +730,16 @@ def main_incoming_sort(
         # TODO: handle admin key and flags on cldata
 
         remote_status = cldata.status
-        # if remote_status == STATUS_KEEP_ALIVE:
-        #     # client is pinging server ports to keep nat table listings
-        #     continue
+        if remote_status == STATUS_PING:
+            # client is pinging server ports to keep nat table listings
+            continue
         if remote_status & STATUS_REG_MASK:
             client = Client(cldata.name, ip_address, remote_status)
             if remote_status == STATUS_REG_HOST or remote_status == STATUS_REG_HOST_KNOWNHOST:
                 success = set_client_ct(cldata, client)
                 if not success:
                     error_cldata.status = ERROR_BAD_GROUP_SIZE
-                    error_cldata.time_stamp = time()
+                    error_cldata.time_stamp = get_timestamp()
                     key = resp_queue_get()
                     udp_socket_sendto(pack_udp(error_cldata), ip_address)
                     resp_queue_put(key)
@@ -748,19 +752,21 @@ def main_incoming_sort(
             connect_lock_release()
             if client is None:
                 error_cldata.status = ERROR_NO_CLIENT
-                error_cldata.time_stamp = time()
+                error_cldata.time_stamp = get_timestamp()
                 key = resp_queue_get()
                 udp_socket_sendto(pack_udp(error_cldata), ip_address)
                 resp_queue_put(key)
             elif remote_status <= STATUS_JOIN_SESSION:
-                client.latency = time() - cldata.time_stamp
+                client.latency = get_timestamp() - cldata.time_stamp
                 client.status = remote_status
                 if remote_status == STATUS_GROUPING and cldata.flags & CL_ADDRESSES_LATENCIES:
+                    unpack_lock.acquire()
                     unpack_host_latency_info(cldata, client)
+                    unpack_lock.release()
                 handler_pipe_send(client)
             else:
                 error_cldata.status |= ERROR_BAD_STATUS
-                error_cldata.time_stamp = time()
+                error_cldata.time_stamp = get_timestamp()
                 key = resp_queue_get()
                 udp_socket_sendto(pack_udp(error_cldata), ip_address)
                 resp_queue_put(key)
@@ -858,8 +864,10 @@ def main_proc(tcp_socket, udp_sockets, buffer_size, udp_socket_ct, _verbose):
     resp_queues = [multi_manager.Queue() for _ in range(subproc_ct)]
     regbuf_queue = multi_manager.Queue()
     print_queue = multi_manager.Queue()
+    grp_queue = multi_manager.Queue()
     connect_lock = Lock()
     incoming_lock = Lock()
+    unpack_lock = Lock()
     for queue in resp_queues:
         queue.put((0,))
     print_queue.put((0,))
@@ -868,6 +876,7 @@ def main_proc(tcp_socket, udp_sockets, buffer_size, udp_socket_ct, _verbose):
     central_regbuf = RegisterBuffer()
     grpdat = GroupingData()
     regbuf_queue.put(central_regbuf)
+    grp_queue.put(grpdat)
 
     handler_args = [
         (
@@ -875,7 +884,7 @@ def main_proc(tcp_socket, udp_sockets, buffer_size, udp_socket_ct, _verbose):
             tcp_socket,
             regbuf_queue,
             resp_queues[i],
-            grpdat if i == 0 else False,
+            grp_queue,
             incsort_handler_pipes_rem[i],
             main_handler_pipes_rem[i],
             max_sessions,
@@ -895,7 +904,8 @@ def main_proc(tcp_socket, udp_sockets, buffer_size, udp_socket_ct, _verbose):
             connect_lock,
             incsort_handler_pipes_loc[i],
             incoming,
-            incoming_lock
+            incoming_lock,
+            unpack_lock
         )
         for i in range(subproc_ct)
     ]
@@ -954,7 +964,7 @@ def handle_clients(
     tcp_socket, 
     regbuf_queue,
     resp_queue,
-    grpdat,
+    grp_queue,
     client_pipe,
     drop_pipe, 
     max_sessions,
@@ -966,7 +976,6 @@ def handle_clients(
     # TODO: sort out good socket structure to avoid using a resp_queue more
     # drop_list = drop_pipe.recv()
     regbuf_local = RegisterBuffer()
-    grpdat_lock = Lock()
     main_cldata = [[CLData(), None] for _ in range(SES_MAX*subproc_ct)]
     if group_duty:
         grp_cldata = [[CLData(), None] for _ in range(SES_MAX)]
@@ -976,9 +985,9 @@ def handle_clients(
 
     # TODO: sessions proc updates; each name points to a list of clients that request to join
     regbuf_turnover_ctr = 0
-    regbuf_turnover_time = 3
+    regbuf_turnover_time = 1
     grpdat_turnover_ctr = 0
-    grpdat_turnover_time = 4
+    grpdat_turnover_time = 2
     verbose_turnover_ctr = 0
     verbose_turnover_time = 10
     prev_time = time()
@@ -991,7 +1000,7 @@ def handle_clients(
     if group_duty:
         grouping_thread = Thread(
             target=grp_handle,
-            args=(grpdat, regbuf_queue, grp_cldata, delta_time, grpdat_lock)
+            args=(grp_queue, regbuf_queue, grp_cldata, delta_time, resp_queue, udp_socket)
         )
     else:
         grouping_thread = None
@@ -1024,11 +1033,10 @@ def handle_clients(
                     grouping_thread = Thread(
                         target=grp_handle,
                         args=(
-                            grpdat,
+                            grp_queue,
                             regbuf_queue,
                             grp_cldata,
                             grp_delta_time,
-                            grpdat_lock,
                             resp_queue,
                             udp_socket
                         )
@@ -1050,9 +1058,9 @@ def handle_clients(
             # TODO: encode-decode with shared memory objects like Value and Array
 
             if client_status == STATUS_HOST_READY:
-                grpdat_lock.acquire()
-                cld_i = grp_lock_session(grpdat, client, grp_cldata, cld_i)
-                grpdat_lock.release()
+                grpdat = grp_queue.get()
+                cld_i = grp_lock_session(grpdat, client, main_cldata, cld_i)
+                grp_queue.put(grpdat)
             elif client_status == STATUS_HOST_PREPARING:
                 pass
             elif client_status == STATUS_CLIENT_WAITING:
@@ -1061,11 +1069,11 @@ def handle_clients(
                 pass
             elif client_status & STATUS_REG_MASK:
                 cld_i = regbuf_add_client_to_local(client, regbuf_local, main_cldata, cld_i)
-            elif group_duty and client_status == STATUS_GROUPING: # STATUS_GROUPING
+            elif client_status == STATUS_GROUPING: # STATUS_GROUPING
                 # TODO: yet another reason to just separate the grouping process here
-                grpdat_lock.acquire()
-                cld_i = grp_latcheck(grpdat, client, grp_cldata, cld_i)
-                grpdat_lock.release()
+                grpdat = grp_queue.get()
+                cld_i = grp_latcheck(grpdat, client, main_cldata, cld_i)
+                grp_queue.put(grpdat)
 
                 # add to data structure handled by grouping process, pipe occasionally
                 pass
@@ -1073,7 +1081,9 @@ def handle_clients(
 
         if _verbose and verbose_turnover_ctr > verbose_turnover_time:
             print_key = print_queue.get()
+            grpdat = grp_queue.get()
             print(grpdat)
+            grp_queue.put(grpdat)
             print_queue.put(print_key)
             verbose_turnover_ctr = 0
 
