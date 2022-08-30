@@ -931,7 +931,7 @@ def main_proc(tcp_socket, udp_sockets, buffer_size, udp_socket_ct, _verbose):
     subproc_ct = udp_socket_ct
     ip_turnover_time = 15
     ip_turnover_update = 5
-    max_poll_rate = 0.099
+    max_poll_rate = 0.038
     incoming = deque()
     max_sessions = 100
     verbose_print_time = VERBOSE_UPDATE_TIME

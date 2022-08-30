@@ -33,7 +33,7 @@ FMYMWorker::FMYMWorker(int32* _info_key, int8* _play_group) {
 		server_port_main = 7777 + port_ct_m1;
 	}
 	local.name = FString("no name");
-	local.set_local_address(7777);
+	local.set_local_address(7780);
 	local.is_host = false;
 	server_main.name = FString("JoeSevere!");
 	server_main.set_address(remote_ip, server_port_main);
@@ -80,18 +80,26 @@ uint32 FMYMWorker::Run() {
 
 	// -- the register process, wherein we init connection with server and wait for it to tell us --
 	// -- we've advanced to the matchmaking stage --
+	UMYMSubsystem::print("**trying client");
+	send_server_status(MYM::STATUS_REG_CLIENT);
 	MYM::CLStatus reg_status = _register(MYM::STATUS_REG_CLIENT);
-	if (run_thread && reg_status != MYM::STATUS_REG_CLIENT) {
-		if (reg_status == MYM::STATUS_NONE) {
-			reg_status = _register(MYM::STATUS_REG_HOST);
-			if (reg_status != MYM::STATUS_REG_HOST) {
-				return MYM::THREAD_FAILURE;
-			}
-			local.is_host = true;
+	if (!run_thread) {;}
+	else if (reg_status == MYM::STATUS_NONE) {
+		UMYMSubsystem::print("**trying host");
+		send_server_status(MYM::STATUS_REG_HOST, 5);
+		reg_status = _register(MYM::STATUS_REG_HOST, 5);
+		if (reg_status != MYM::STATUS_REG_HOST) {
+			UMYMSubsystem::print("**host fail");
+			return MYM::THREAD_FAILURE;
 		}
-		else {
-			return MYM::THREAD_FAILURE;	
-		}
+		UMYMSubsystem::print("**host success");
+		local.is_host = true;
+	}
+	else if (reg_status == MYM::STATUS_REG_CLIENT) {
+		UMYMSubsystem::print("**client success");
+	}
+	else {
+		return MYM::THREAD_FAILURE;	
 	}
 
 	// -- do --
@@ -121,40 +129,41 @@ void FMYMWorker::Stop() {
 	run_thread = false;
 }
 
-MYM::CLStatus FMYMWorker::_register(MYM::CLStatus status) {
-	server_send_status(status);
+MYM::CLStatus FMYMWorker::_register(MYM::CLStatus status, int8 client_ct) {
+	FPlatformProcess::Sleep(1.0);
 	double time_elapsed = 0.0;
 	double total_time_elapsed = 0.0;
 	double no_pending_time = 0.0;
 	double delta_time;
 	bool got_first_reply = false;
-	std::chrono::time_point<std::chrono::system_clock> prev_time = std::chrono::system_clock::now();
+	auto prev_time = std::chrono::system_clock::now();
 	while (run_thread) {
 		elapse_time(0.001, delta_time, prev_time);
 		time_elapsed += delta_time;
 		
 		if (time_elapsed >= server_contact_rate) {
-			server_keep_alive();
+			keep_server_connection_alive();
 			total_time_elapsed += time_elapsed;
 			if (no_pending_time > MYM::NO_REPLY_TIMEOUT) {
 				UMYMSubsystem::print(
-					"FMYMWorker::_register(): %d seconds elapsed with no response. returning.",
+					"FMYMWorker::_register(): %2.lf seconds elapsed with no response. returning.",
 					no_pending_time
 				);
 				return MYM::STATUS_NONE;
 			}
 			if (total_time_elapsed > MYM::REGISTER_TIMEOUT) {
 				UMYMSubsystem::print(
-					"FMYMWorker::_register(): %d seconds elapsed while trying to register. returning.",
+					"FMYMWorker::_register(): %.2lf seconds elapsed while trying to register. returning.",
 					total_time_elapsed
 				);
 				return MYM::STATUS_NONE;
 			}
 			if (!got_first_reply) {
-				server_send_status(status);
+				send_server_status(status, client_ct);
 			}
 			else {
-				server_send_status(MYM::STATUS_GROUPING);
+				UMYMSubsystem::print("sending grouping");
+				send_server_status(MYM::STATUS_GROUPING);
 			}
 			time_elapsed = 0.0;
 			continue;
@@ -176,15 +185,14 @@ MYM::CLStatus FMYMWorker::_register(MYM::CLStatus status) {
 		got_first_reply = true;
 		no_pending_time = 0.0;
 		if (
-			in_cldata.status == MYM::STATUS_GROUPING
-			|| in_cldata.status == MYM::STATUS_IN_GROUP
+			in_cldata.status == MYM::STATUS_IN_GROUP
 			|| in_cldata.status == MYM::STATUS_LATCHECK_CLIENT
 			|| in_cldata.status == MYM::STATUS_LATCHECK_HOST
 		) {
 			break;
 		}
 		if (in_cldata.status & MYM::ERROR_MASK) {
-			UMYMSubsystem::print("ERROR FMYMWorker::_register() server error code %02x", in_cldata.status >> 16);
+			UMYMSubsystem::print("ERROR FMYMWorker::_register() server error code %04x", in_cldata.status);
 			switch(in_cldata.status) {
 			case MYM::ERROR_DATA_FORMAT:
 			case MYM::ERROR_BAD_STATUS:
@@ -203,7 +211,7 @@ MYM::CLStatus FMYMWorker::_register(MYM::CLStatus status) {
 }
 
 MYM::CLStatus FMYMWorker::host_matchmaking() {
-	
+	return MYM::STATUS_NONE;	
 }
 
 MYM::CLStatus FMYMWorker::client_matchmaking() {
@@ -214,7 +222,7 @@ MYM::CLStatus FMYMWorker::client_matchmaking() {
 	double delta_time;
 	bool checking_latency = false;
 	bool just_entered_group = false;
-	std::chrono::time_point<std::chrono::system_clock> prev_time = std::chrono::system_clock::now();
+	auto prev_time = std::chrono::system_clock::now();
 	while (run_thread) {
 		elapse_time(0.0001, delta_time, prev_time);
 		time_elapsed += delta_time;
@@ -226,33 +234,39 @@ MYM::CLStatus FMYMWorker::client_matchmaking() {
 		}
 		
 		if (time_elapsed >= server_contact_rate) {
-			server_keep_alive();
-			state_time_elapsed += time_elapsed;
-			if (no_pending_time > MYM::NO_REPLY_TIMEOUT) {
-				UMYMSubsystem::print(
-					"FMYMWorker::client_matchmaking(): %d seconds elapsed with no response. returning.",
-					no_pending_time
-				);
-				return MYM::STATUS_NONE;
+			if (checking_latency) {
+				if (latcheck_time_elapsed > MYM::LATCHECK_TIME) {
+					client_send_server_latencies();
+					latcheck_time_elapsed = 0.0;
+					checking_latency = false;
+				}
+				
 			}
-			if (state_time_elapsed > MYM::MATCHMAKING_TIMEOUT) {
-				UMYMSubsystem::print(
-					"FMYMWorker::client_matchmaking(): %d seconds elapsed in current state while trying to"
-					" matchmake. returning.",
-					state_time_elapsed
-				);
-				return MYM::STATUS_NONE;
+			else {
+				keep_server_connection_alive();
+				state_time_elapsed += time_elapsed;
+				if (no_pending_time > MYM::NO_REPLY_TIMEOUT) {
+					UMYMSubsystem::print(
+						"FMYMWorker::client_matchmaking(): %.2lf seconds elapsed with no response. returning.",
+						no_pending_time
+					);
+					return MYM::STATUS_NONE;
+				}
+				if (state_time_elapsed > MYM::MATCHMAKING_TIMEOUT) {
+					UMYMSubsystem::print(
+						"FMYMWorker::client_matchmaking(): %.2lf seconds elapsed in current state while trying to"
+						" matchmake. returning.",
+						state_time_elapsed
+					);
+					return MYM::STATUS_NONE;
+				}
+				
+				if (!checking_latency) {
+					send_server_status(MYM::STATUS_GROUPING);
+				}
+				time_elapsed = 0.0;
+				continue;
 			}
-			if (latcheck_time_elapsed > MYM::LATCHECK_TIME) {
-				client_send_server_latencies();
-				latcheck_time_elapsed = 0.0;
-				checking_latency = false;
-			}
-			if (!checking_latency) {
-				server_send_status(MYM::STATUS_GROUPING);
-			}
-			time_elapsed = 0.0;
-			continue;
 		}
 		
 		switch(receive_and_parse()) {
@@ -295,7 +309,7 @@ MYM::CLStatus FMYMWorker::client_matchmaking() {
 				}
 			}
 			else {
-				// error
+				UMYMSubsystem::print("ERROR FMYMWorker::client_matchmaking(): latcheck group size 0");
 			}
 		}
 		else if (in_cldata.status == MYM::STATUS_IN_GROUP) {
@@ -309,7 +323,7 @@ MYM::CLStatus FMYMWorker::client_matchmaking() {
 				MYM::MAX_PLAY_CLIENTS
 			);
 			if (in_group_size < 1) {
-				// error
+				UMYMSubsystem::print("ERROR FMYMWorker::client_matchmaking(): play group size 0");
 			}
 			// just waiting to join
 		}
@@ -362,17 +376,19 @@ int32 FMYMWorker::client_read_in_data(MYM::CLData::READ_STATUS target_status, MY
 	return group_size;
 }
 
-void FMYMWorker::server_send_status(MYM::CLStatus status) {
+void FMYMWorker::send_server_status(MYM::CLStatus status, int8 client_ct) {
 	out_cldata.zero();
 	out_cldata.status = status;
 	out_cldata.set_name(local.name);
+	out_cldata.client_data[0] = client_ct;
 	uint8_t packet_buff[MYM::DATAGRAM_SAFE_LEN];
 	out_cldata.packet(packet_buff);
 	int32_t bytes_sent;
 	socket->SendTo(packet_buff, MYM::DATAGRAM_SAFE_LEN, bytes_sent, *server_main.endpoint.ToInternetAddr());
 }
 
-void FMYMWorker::server_keep_alive() {
+void FMYMWorker::keep_server_connection_alive() {
+	out_cldata.zero();
 	out_cldata.status = MYM::STATUS_PORT_OPEN;
 	uint8_t packet_buff[MYM::DATAGRAM_SAFE_LEN];
 	out_cldata.packet(packet_buff);
@@ -399,7 +415,7 @@ int32 FMYMWorker::client_handle_pingback() {
 		if (comm.latbuf_full) {
 			full_latbuf_ct++;	
 		}
-		else if (last_comm.address == comm.address) {
+		else if (last_comm.server_order_ip == comm.server_order_ip && last_comm._port == comm._port) {
 			bool latbuf_full = comm.update_latency(get_timestamp() - in_cldata.time_stamp);
 			if (latbuf_full) {
 				full_latbuf_ct++;
@@ -426,6 +442,7 @@ void FMYMWorker::client_send_server_latencies() {
 			*((uint16*)(out_cldata.client_data + (j * 14 + 4))) = comm._port;
 			*((double*)(out_cldata.client_data + (j * 14 + 6))) = comm.latency();
 			j += 14;
+			FPlatformProcess::Sleep(0.04);
 		}
 	}
 	uint8_t packet_buff[MYM::DATAGRAM_SAFE_LEN];
@@ -466,15 +483,17 @@ uint32 FMYMWorker::receive_and_parse() {
 	last_comm.set_address(src_addr);
 	UMYMSubsystem::print(
 		"Message from %s:\nname:%s, status:0x%04x, time_stamp:%.5lf",
-		last_comm.address, *last_comm.name, in_cldata.status, in_cldata.time_stamp
+		*last_comm.address, *last_comm.name, in_cldata.status, in_cldata.time_stamp
 	);
 	return MYM::THREAD_SUCCESS;
 }
 
-void FMYMWorker::elapse_time(double amt, double& ctr, std::chrono::time_point<std::chrono::system_clock>& prev) {
+void FMYMWorker::elapse_time(double amt, double& delta, std::chrono::time_point<std::chrono::system_clock>& prev) {
 	FPlatformProcess::Sleep(amt);
-	std::chrono::time_point<std::chrono::system_clock> new_time = std::chrono::system_clock::now();
-	ctr += (new_time - prev).count();
+	auto new_time = std::chrono::system_clock::now();
+	auto new_duration = std::chrono::duration<double>(new_time.time_since_epoch());
+	auto prev_duration = std::chrono::duration<double>(prev.time_since_epoch());
+	delta = (new_duration - prev_duration).count();
 	prev = new_time;
 }
 

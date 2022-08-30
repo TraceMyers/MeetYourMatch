@@ -81,7 +81,7 @@ namespace MYM {
 	static constexpr uint32 NO_PENDING = 2;
 	static constexpr uint32 NULL_SOCKET = 3;
 	static constexpr uint32 READ_FAILURE = 4;
-	static constexpr double REGISTER_TIMEOUT = 45.0;
+	static constexpr double REGISTER_TIMEOUT = 50.0;
 	static constexpr double NO_REPLY_TIMEOUT = 20.0;
 	static constexpr double MATCHMAKING_TIMEOUT = 640.0;
 
@@ -189,13 +189,13 @@ namespace MYM {
 			FIPv4Address::Parse(ip, addr);
 			endpoint = FIPv4Endpoint(addr, port);
 			address = FString::Printf(TEXT("%s:%d"), ip, port);
-			uint32 ip;
-			endpoint.ToInternetAddr()->GetIp(ip);
+			uint32 _ip;
+			endpoint.ToInternetAddr()->GetIp(_ip);
 			server_order_ip =
-				(0x000000ff & ip) << 24
-				| (0x0000ff00 & ip) << 8
-				| (0x00ff0000 & ip) >> 8
-				| (0xff000000 & ip) >> 24;
+				(0x000000ff & _ip) << 24
+				| (0x0000ff00 & _ip) << 8
+				| (0x00ff0000 & _ip) >> 8
+				| (0xff000000 & _ip) >> 24;
 			_port = port;
 		}
 		
@@ -248,12 +248,12 @@ namespace MYM {
 		// TODO: make this read less hacky
 		void packet(uint8_t* buffer) {
 			memcpy((void*)buffer, (void*)(&status), 28);
-			memcpy(((void*)buffer)+28, (void*)(((uint8*)(&status))+32), DATAGRAM_SAFE_LEN-28);
+			memcpy(buffer+28, (void*)(((uint8*)(&status))+32), DATAGRAM_SAFE_LEN-28);
 		}
 
 		void unpacket(uint8_t* buffer) {
 			memcpy((void*)&status, (void*)buffer, 28);
-			memcpy((void*)&admin_key, ((void*)buffer)+28, DATAGRAM_SAFE_LEN-28);
+			memcpy((void*)&admin_key, buffer+28, DATAGRAM_SAFE_LEN-28);
 		}
 
 		void zero() {
@@ -295,7 +295,7 @@ namespace MYM {
 			uint32 val = *((uint32*)client_data_ptr);
 			if (val == 0) {
 				client_data_ptr += 2;
-				uint32 val = *((uint32*)client_data_ptr);
+				val = *((uint32*)client_data_ptr);
 				if (val == IPLIST_PREFIX) {
 					if (remaining < 12) {
 						read_status = READ_EMPTY;

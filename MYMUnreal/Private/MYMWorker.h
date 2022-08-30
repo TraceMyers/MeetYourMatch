@@ -22,12 +22,12 @@ public:
 private:
 
 	uint32 receive_and_parse();
-	MYM::CLStatus _register(MYM::CLStatus status);
+	void keep_server_connection_alive();
+	MYM::CLStatus _register(MYM::CLStatus status, int8 client_ct=0);
 	MYM::CLStatus host_matchmaking();
 	MYM::CLStatus client_matchmaking();
 	int32 client_read_in_data(MYM::CLData::READ_STATUS target_status, MYM::CommData* group, int32 max_group_size);
-	void server_send_status(MYM::CLStatus status);
-	void server_keep_alive();
+	void send_server_status(MYM::CLStatus status, int8 client_ct=0);
 	void client_send_ping(FIPv4Endpoint& endpoint); // TODO: these have bad naming scheme
 	int32 client_handle_pingback();
 	void client_send_server_latencies();
@@ -46,7 +46,7 @@ private:
 	int64 timer;
 	double server_contact_rate;
 	int32 port_ct;
-	char* remote_ip = "154.12.226.174";
+	char* remote_ip = "xxx.xxx.xxx.xxx";
 	FString socket_description = "UDP Listen Socket";
 	int32 latcheck_group_size;
 	int32 in_group_size;
