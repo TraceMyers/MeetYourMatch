@@ -44,6 +44,7 @@ from constants import *
 #       and session servers: consider that both the registration and matchmaking servers
 #       need to heavily priorize computation over communication, which might lead to simplification
 #       of their comms
+# TODO: net order ip addresses
 
 # --------------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------------------:classes
@@ -339,7 +340,7 @@ def grp_merge_regbuf(
                 cldata_ctr = \
                     grp_cldata_add(grp_cldata, cldata_ctr, ERROR_HOST_NAME_TAKEN, address)
                 continue
-            cldata_ctr = grp_cldata_add(grp_cldata, cldata_ctr, STATUS_GROUPING, address)
+            cldata_ctr = grp_cldata_add(grp_cldata, cldata_ctr, STATUS_IN_GROUP, address)
             grp_add_host(grpdat, GrpClient(client))
         elif client_status == STATUS_REG_CLIENT_KNOWNHOST:
             client_name = client.name
@@ -508,7 +509,7 @@ def grp_cldata_add(cldata_list, cldata_i, status, address):
 
 
 def grp_pack_group(cldata, group):
-    # groups are 18 bytes per member: 6 for IP/port, 12 for name
+    # groups are 18 bytes per member: 12 for name, 6 for IP/port
     # group format is list((name1,ip/port1), ...)
     cur_len_bytes = len(cldata[0].client_data)
     max_len = MAX_GROUP_PACK - (cur_len_bytes // 18) - 1 # null terminated & prefixed
@@ -720,7 +721,7 @@ def grp_handle(grp_queue, regbuf_queue, grp_cldata, delta_time, resp_queue, udp_
                 grp_add_client_to_session(client, session)
                 h_address = host_address if host_address[0] != client.address[0] else \
                     h_local_address
-                grp_pack_iplist(grp_cldata[cldata_ctr], [host_address, ])
+                grp_pack_group(grp_cldata[cldata_ctr], [(session.host.name, h_address), ])
                 cldata_ctr = grp_cldata_add(
                     grp_cldata,
                     cldata_ctr,
