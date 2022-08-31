@@ -70,6 +70,8 @@ bool FMYMWorker::Init() {
 	UMYMSubsystem::print("FMYMWorker::Init() thread started");
 	run_thread = true;
 	play_group[0].is_host = true;
+	latcheck_group_size = 0;
+	in_group_size = 0;
 	return true;
 }
 
@@ -142,7 +144,6 @@ MYM::CLStatus FMYMWorker::_register(MYM::CLStatus status, int8 client_ct) {
 		time_elapsed += delta_time;
 		
 		if (time_elapsed >= server_contact_rate) {
-			keep_server_connection_alive();
 			total_time_elapsed += time_elapsed;
 			if (no_pending_time > MYM::NO_REPLY_TIMEOUT) {
 				UMYMSubsystem::print(
@@ -160,11 +161,15 @@ MYM::CLStatus FMYMWorker::_register(MYM::CLStatus status, int8 client_ct) {
 			}
 			if (!got_first_reply) {
 				send_server_status(status, client_ct);
+				FPlatformProcess::Sleep(0.05);
+				send_server_status(MYM::STATUS_GROUPING);
+				FPlatformProcess::Sleep(0.05);
 			}
 			else {
 				UMYMSubsystem::print("sending grouping");
 				send_server_status(MYM::STATUS_GROUPING);
 			}
+			keep_server_connection_alive();
 			time_elapsed = 0.0;
 			continue;
 		}
@@ -192,6 +197,9 @@ MYM::CLStatus FMYMWorker::_register(MYM::CLStatus status, int8 client_ct) {
 			break;
 		}
 		if (in_cldata.status & MYM::ERROR_MASK) {
+			if (in_cldata.status == MYM::ERROR_FAST_POLL_RATE) {
+				continue;
+			}
 			UMYMSubsystem::print("ERROR FMYMWorker::_register() server error code %04x", in_cldata.status);
 			switch(in_cldata.status) {
 			case MYM::ERROR_DATA_FORMAT:
@@ -211,15 +219,102 @@ MYM::CLStatus FMYMWorker::_register(MYM::CLStatus status, int8 client_ct) {
 }
 
 MYM::CLStatus FMYMWorker::host_matchmaking() {
-	return MYM::STATUS_NONE;	
+	double time_elapsed = 0.0;
+	double state_time_elapsed = 0.0;
+	double no_pending_time = 0.0;
+	double delta_time;
+	bool just_entered_group = false;
+	auto prev_time = std::chrono::system_clock::now();
+	while (run_thread) {
+		elapse_time(0.0001, delta_time, prev_time);
+		time_elapsed += delta_time;
+		
+		if (time_elapsed >= server_contact_rate) {
+			state_time_elapsed += time_elapsed;
+			if (no_pending_time > MYM::NO_REPLY_TIMEOUT) {
+				UMYMSubsystem::print(
+					"FMYMWorker::host_matchmaking(): %.2lf seconds elapsed with no response. returning.",
+					no_pending_time
+				);
+				return MYM::STATUS_NONE;
+			}
+			if (state_time_elapsed > MYM::MATCHMAKING_TIMEOUT) {
+				UMYMSubsystem::print(
+					"FMYMWorker::host_matchmaking(): %.2lf seconds elapsed in current state while trying to"
+					" matchmake. returning.",
+					state_time_elapsed
+				);
+				return MYM::STATUS_NONE;
+			}
+			send_server_status(MYM::STATUS_GROUPING);
+			keep_server_connection_alive();
+			time_elapsed = 0.0;
+			continue;
+		}
+		
+		switch(receive_and_parse()) {
+		case MYM::NO_PENDING:
+			no_pending_time += delta_time;
+			continue;
+		case MYM::THREAD_SUCCESS:
+			break;
+		case MYM::NULL_SOCKET:
+			return MYM::ERROR_MASK;
+		case MYM::READ_FAILURE:
+		default:
+			continue;
+		}
+		// status latcheck host or status host ready
+		no_pending_time = 0.0;
+		if (in_cldata.status == MYM::STATUS_PING) {
+			host_pingback();	
+		}
+		else if (in_cldata.status == MYM::STATUS_LATCHECK_HOST) {
+			host_read_in_data();
+			if (latcheck_group_size > 0) {
+				for (int i = 0; i < latcheck_group_size && i < MYM::MAX_LATCHECK_CLIENTS; i++) {
+					MYM::CommData comm = latcheck_group[i];
+					host_allow_ping(comm.endpoint);
+				}
+			}
+		}
+		else if (in_cldata.status == MYM::STATUS_HOST_READY) {
+			host_read_in_data();
+			return MYM::STATUS_HOST_READY;
+		}
+		else if (in_cldata.status & MYM::ERROR_MASK) {
+			if (in_cldata.status == MYM::ERROR_FAST_POLL_RATE) {
+				continue;
+			}
+			UMYMSubsystem::print(
+				"ERROR FMYMWorker::host_matchmaking() server error code %04x",
+				in_cldata.status & MYM::ERROR_MASK
+			);
+			switch(in_cldata.status) {
+			case MYM::ERROR_DATA_FORMAT:
+			case MYM::ERROR_BAD_STATUS:
+				return MYM::ERROR_MASK; 
+			case MYM::ERROR_REGISTER_FAIL:
+			case MYM::ERROR_INTAKE_MAXED:
+			case MYM::ERROR_NO_CLIENT:
+			case MYM::ERROR_GROUPING_TIMEOUT:
+				return MYM::STATUS_NONE; 
+			default:
+				// ignore
+				;
+			}
+		}
+	}
+	return MYM::STATUS_NONE;
 }
 
 MYM::CLStatus FMYMWorker::client_matchmaking() {
 	double time_elapsed = 0.0;
 	double state_time_elapsed = 0.0;
 	double no_pending_time = 0.0;
-	double latcheck_time_elapsed = 0.0;
 	double delta_time;
+	double latcheck_time_elapsed = 0.0;
+	double latcheck_round_time_elapsed = 0.0;
 	bool checking_latency = false;
 	bool just_entered_group = false;
 	auto prev_time = std::chrono::system_clock::now();
@@ -228,9 +323,11 @@ MYM::CLStatus FMYMWorker::client_matchmaking() {
 		time_elapsed += delta_time;
 		if (checking_latency) {
 			latcheck_time_elapsed += delta_time;
+			latcheck_round_time_elapsed += delta_time;
 		}
 		else {
 			latcheck_time_elapsed = 0.0;
+			latcheck_round_time_elapsed = 0.0;
 		}
 		
 		if (time_elapsed >= server_contact_rate) {
@@ -240,35 +337,39 @@ MYM::CLStatus FMYMWorker::client_matchmaking() {
 					latcheck_time_elapsed = 0.0;
 					checking_latency = false;
 				}
-				
 			}
-			else {
-				keep_server_connection_alive();
-				state_time_elapsed += time_elapsed;
-				if (no_pending_time > MYM::NO_REPLY_TIMEOUT) {
-					UMYMSubsystem::print(
-						"FMYMWorker::client_matchmaking(): %.2lf seconds elapsed with no response. returning.",
-						no_pending_time
-					);
-					return MYM::STATUS_NONE;
-				}
-				if (state_time_elapsed > MYM::MATCHMAKING_TIMEOUT) {
-					UMYMSubsystem::print(
-						"FMYMWorker::client_matchmaking(): %.2lf seconds elapsed in current state while trying to"
-						" matchmake. returning.",
-						state_time_elapsed
-					);
-					return MYM::STATUS_NONE;
-				}
-				
-				if (!checking_latency) {
-					send_server_status(MYM::STATUS_GROUPING);
-				}
-				time_elapsed = 0.0;
-				continue;
+			keep_server_connection_alive();
+			state_time_elapsed += time_elapsed;
+			if (no_pending_time > MYM::NO_REPLY_TIMEOUT) {
+				UMYMSubsystem::print(
+					"FMYMWorker::client_matchmaking(): %.2lf seconds elapsed with no response. returning.",
+					no_pending_time
+				);
+				return MYM::STATUS_NONE;
 			}
+			if (state_time_elapsed > MYM::MATCHMAKING_TIMEOUT) {
+				UMYMSubsystem::print(
+					"FMYMWorker::client_matchmaking(): %.2lf seconds elapsed in current state while trying to"
+					" matchmake. returning.",
+					state_time_elapsed
+				);
+				return MYM::STATUS_NONE;
+			}
+			
+			if (!checking_latency) {
+				send_server_status(MYM::STATUS_GROUPING);
+			}
+			time_elapsed = 0.0;
+			continue;
 		}
-		
+		if (checking_latency && latcheck_round_time_elapsed > MYM::LATCHECK_ROUND_TIME) {
+			for (int i = 0; i < latcheck_group_size && i < MYM::MAX_LATCHECK_CLIENTS; i++) {
+				MYM::CommData comm = latcheck_group[i];
+				client_send_ping(comm.endpoint);
+			}
+			latcheck_round_time_elapsed = 0.0;
+		}
+
 		switch(receive_and_parse()) {
 		case MYM::NO_PENDING:
 			no_pending_time += delta_time;
@@ -302,7 +403,7 @@ MYM::CLStatus FMYMWorker::client_matchmaking() {
 			);
 			if (latcheck_group_size > 0) {
 				checking_latency = true;
-				for (int i = 0; i < latcheck_group_size; i++) {
+				for (int i = 0; i < latcheck_group_size && i < MYM::MAX_LATCHECK_CLIENTS; i++) {
 					MYM::CommData comm = latcheck_group[i];
 					comm.reset_latency();
 					client_send_ping(comm.endpoint);
@@ -328,9 +429,17 @@ MYM::CLStatus FMYMWorker::client_matchmaking() {
 			// just waiting to join
 		}
 		else if (in_cldata.status == MYM::STATUS_JOIN_SESSION) {
-			break;
+			in_group_size = client_read_in_data(
+				MYM::CLData::READ_GROUP,
+				play_group,
+				MYM::MAX_PLAY_CLIENTS
+			);
+			return MYM::STATUS_JOIN_SESSION;
 		}
 		else if (in_cldata.status & MYM::ERROR_MASK) {
+			if (in_cldata.status == MYM::ERROR_FAST_POLL_RATE) {
+				continue;
+			}
 			UMYMSubsystem::print(
 				"ERROR FMYMWorker::client_matchmaking() server error code %04x",
 				in_cldata.status & MYM::ERROR_MASK
@@ -350,7 +459,7 @@ MYM::CLStatus FMYMWorker::client_matchmaking() {
 			}
 		}
 	}
-	return MYM::STATUS_JOIN_SESSION;
+	return MYM::STATUS_NONE;
 }
 
 int32 FMYMWorker::client_read_in_data(MYM::CLData::READ_STATUS target_status, MYM::CommData* group, int32 max_grp_sz) {
@@ -364,7 +473,7 @@ int32 FMYMWorker::client_read_in_data(MYM::CLData::READ_STATUS target_status, MY
 			}
 			if (read_status != target_status) {
 				UMYMSubsystem::print(
-					"ERROR FMYMWorker::client_matchmaking() cldata latcheck read error. ignoring last read."
+					"ERROR FMYMWorker::client_read_in_data() cldata read error. ignoring last read."
 				);
 				break;
 			}
@@ -374,6 +483,38 @@ int32 FMYMWorker::client_read_in_data(MYM::CLData::READ_STATUS target_status, MY
 		UMYMSubsystem::print("ERROR FMYMWorker::read_client_data() init cldata latcheck read error");
 	}
 	return group_size;
+}
+
+void FMYMWorker::host_read_in_data() {
+	MYM::CLData::READ_STATUS read_status = in_cldata.init_read_client_data();
+	if (read_status == MYM::CLData::READ_GROUP) {
+		for (in_group_size = 0; in_group_size < MYM::MAX_PLAY_CLIENTS; in_group_size++) {
+			read_status = in_cldata.read_client_data(play_group[in_group_size]);
+			if (read_status == MYM::CLData::READ_EMPTY || read_status == MYM::CLData::READ_IPLIST) {
+				break;
+			}
+			if (read_status == MYM::CLData::READ_ERROR) {
+				UMYMSubsystem::print(
+					"ERROR FMYMWorker::host_read_in_data() cldata group read error. ignoring last read."
+				);
+				break;
+			}
+		}	
+	}
+	if (read_status == MYM::CLData::READ_IPLIST) {
+		for (latcheck_group_size = 0; latcheck_group_size < MYM::MAX_LATCHECK_CLIENTS; latcheck_group_size++) {
+			read_status = in_cldata.read_client_data(latcheck_group[latcheck_group_size]);
+			if (read_status == MYM::CLData::READ_EMPTY) {
+				break;
+			}
+			if (read_status == MYM::CLData::READ_ERROR) {
+				UMYMSubsystem::print(
+					"ERROR FMYMWorker::host_read_in_data() cldata latcheck read error. ignoring last read."
+				);
+				break;
+			}
+		}	
+	}
 }
 
 void FMYMWorker::send_server_status(MYM::CLStatus status, int8 client_ct) {
@@ -408,9 +549,28 @@ void FMYMWorker::client_send_ping(FIPv4Endpoint& endpoint) {
 	socket->SendTo(packet_buff, MYM::DATAGRAM_SAFE_LEN, bytes_sent, *endpoint.ToInternetAddr());
 }
 
+void FMYMWorker::host_pingback() {
+	out_cldata.zero();
+	out_cldata.status = MYM::STATUS_PINGBACK;
+	out_cldata.time_stamp = in_cldata.time_stamp;
+	uint8_t packet_buff[MYM::DATAGRAM_SAFE_LEN];
+	out_cldata.packet(packet_buff);
+	int32_t bytes_sent;
+	socket->SendTo(packet_buff, MYM::DATAGRAM_SAFE_LEN, bytes_sent, *last_comm.endpoint.ToInternetAddr());
+}
+
+void FMYMWorker::host_allow_ping(FIPv4Endpoint& endpoint) {
+	out_cldata.zero();
+	out_cldata.status = MYM::STATUS_PORT_OPEN;
+	uint8_t packet_buff[MYM::DATAGRAM_SAFE_LEN];
+	out_cldata.packet(packet_buff);
+	int32_t bytes_sent;
+	socket->SendTo(packet_buff, MYM::DATAGRAM_SAFE_LEN, bytes_sent, *endpoint.ToInternetAddr());
+}
+
 int32 FMYMWorker::client_handle_pingback() {
 	int32 full_latbuf_ct = 0;
-	for (int i = 0; i < latcheck_group_size; i++) {
+	for (int i = 0; i < latcheck_group_size && i < MYM::MAX_LATCHECK_CLIENTS; i++) {
 		MYM::CommData& comm = latcheck_group[i];
 		if (comm.latbuf_full) {
 			full_latbuf_ct++;	
@@ -419,9 +579,6 @@ int32 FMYMWorker::client_handle_pingback() {
 			bool latbuf_full = comm.update_latency(get_timestamp() - in_cldata.time_stamp);
 			if (latbuf_full) {
 				full_latbuf_ct++;
-			}
-			else {
-				client_send_ping(last_comm.endpoint);
 			}
 			break;
 		}
@@ -435,7 +592,7 @@ void FMYMWorker::client_send_server_latencies() {
 	out_cldata.flags |= MYM::CL_ADDRESSES_LATENCIES;
 	out_cldata.status = MYM::STATUS_GROUPING;
 	int j = 0;
-	for (int i = 0; i < latcheck_group_size; i++) {
+	for (int i = 0; i < latcheck_group_size && i < MYM::MAX_LATCHECK_CLIENTS; i++) {
 		MYM::CommData comm = latcheck_group[i];
 		if (comm.latbuf_full) {
 			*((uint32*)(out_cldata.client_data + (j * 14))) = comm.server_order_ip;
@@ -470,11 +627,7 @@ uint32 FMYMWorker::receive_and_parse() {
 		ESocketReceiveFlags::None
 	);
 	if (bytes_read != MYM::DATAGRAM_SAFE_LEN) {
-		UMYMSubsystem::print(
-			"ERROR FMYMWorker::Run() read only %db, should be %db",
-			bytes_read, MYM::DATAGRAM_SAFE_LEN
-		);
-		return MYM::READ_FAILURE;
+		return MYM::NO_PENDING;
 	}
 	in_cldata.zero();
 	in_cldata.unpacket(recv_data);

@@ -27,8 +27,11 @@ private:
 	MYM::CLStatus host_matchmaking();
 	MYM::CLStatus client_matchmaking();
 	int32 client_read_in_data(MYM::CLData::READ_STATUS target_status, MYM::CommData* group, int32 max_group_size);
+	void host_read_in_data();
 	void send_server_status(MYM::CLStatus status, int8 client_ct=0);
 	void client_send_ping(FIPv4Endpoint& endpoint); // TODO: these have bad naming scheme
+	void host_pingback(); // TODO: these have bad naming scheme
+	void host_allow_ping(FIPv4Endpoint& endpoint);
 	int32 client_handle_pingback();
 	void client_send_server_latencies();
 	static inline void elapse_time(double amt, double& ctr, std::chrono::time_point<std::chrono::system_clock>& prev);
@@ -46,7 +49,7 @@ private:
 	int64 timer;
 	double server_contact_rate;
 	int32 port_ct;
-	char* remote_ip = "xxx.xxx.xxx.xxx";
+	char* remote_ip = "192.168.5.54";
 	FString socket_description = "UDP Listen Socket";
 	int32 latcheck_group_size;
 	int32 in_group_size;

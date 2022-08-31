@@ -65,8 +65,10 @@ class ConnectionLog:
             return self.ip_to_client[ip_address]
         return None
 
-    def log_ip(self, ip_address):
+    def log_ip(self, ip_address, remote_status):
         """log and refuse connections"""
+        if remote_status == STATUS_PORT_OPEN:
+            return STATUS_PORT_OPEN
         cur_time = time()
         if ip_address in self.ip_log:
             prev_time = self.ip_log[ip_address]
@@ -210,6 +212,7 @@ class Session:
         self.com = COM_STUN
         self.addresses = set([host.address]) # used after grouping
         self.locked = False
+        self.timeout_ctr = 0
 
     def __repr__(self):
         return self.__str__()
@@ -391,7 +394,10 @@ def get_local_fix_addresses(client_address, clients, search_self=False):
 
 
 def grp_latcheck(grpdat, client, cldata_list, cldat_i):
-    hosts = [session.host for session in grpdat.sessions]
+    roomy_hosts = []
+    for session in grpdat.sessions:
+        if not session.locked and len(session.clients) < session.client_max:
+            roomy_hosts.append(session.host)
     ungrouped_clients = []
     for c in grpdat.clients:
         if not c.session:
@@ -400,19 +406,28 @@ def grp_latcheck(grpdat, client, cldata_list, cldat_i):
         grpclient = grpdat.addresses[client.address]
         grpclient.name = client.name
         if grpclient.session is None:
-            grpclient.host_latencies = {**grpclient.host_latencies, **client.host_latencies}
-            host_addresses = get_local_fix_addresses(client.address, hosts)
-            if len(host_addresses) > 0:
-                grp_pack_iplist(cldata_list[cldat_i], host_addresses)
-            cldat_i = grp_cldata_add(
-                cldata_list,
-                cldat_i,
-                STATUS_LATCHECK_CLIENT,
-                client.address
-            )
+            if len(roomy_hosts) > 0:
+                grpclient.host_latencies = {**grpclient.host_latencies, **client.host_latencies}
+                host_addresses = get_local_fix_addresses(client.address, roomy_hosts)
+                if len(host_addresses) > 0:
+                    grp_pack_iplist(cldata_list[cldat_i], host_addresses)
+                cldat_i = grp_cldata_add(
+                    cldata_list,
+                    cldat_i,
+                    STATUS_LATCHECK_CLIENT,
+                    client.address
+                )
+            else:
+                cldat_i = grp_cldata_add(
+                    cldata_list,
+                    cldat_i,
+                    STATUS_GROUPING,
+                    client.address
+                )
         else:
             session = grpclient.session
             if session.host == grpclient:
+                session.timeout_ctr = 0
                 if len(session.clients) > 0:
                     group = [
                         (c.name, c.address) if c.address[0] != client.address[0]
@@ -660,6 +675,12 @@ def grp_handle(grp_queue, regbuf_queue, grp_cldata, delta_time, resp_queue, udp_
 
     grpdat_clients = grpdat.clients
     grpdat_sessions = grpdat.sessions
+    for session in grpdat_sessions:
+        session.timeout_ctr += delta_time
+        if session.timeout_ctr > 10 and not session.locked:
+            grp_rem_session(grpdat, session)
+        elif session.timeout_ctr > 30 and not session.locked:
+            grp_rem_session(grpdat, session)
     hosts = [session.host for session in grpdat_sessions]
     host_addresses = [host.address for host in hosts]
     for client in grpdat_clients:
@@ -797,10 +818,15 @@ def main_incoming_sort(
         ip_address = msg[1]
         if ip_address[1] not in ACCEPT_TRAFFIC_PORTS:
             continue
+        cldata_unpacket_udp(msg[0])
+        remote_status = cldata.status
+
         connect_lock_acquire()
-        error = connect_log_log_ip(ip_address)
+        error = connect_log_log_ip(ip_address, remote_status)
         connect_lock_release()
-        if error > 0:
+        if error == STATUS_PORT_OPEN:
+            continue
+        elif error > 0:
             error_cldata.status = error
             error_cldata.time_stamp = time()
             key = resp_queue_get()
@@ -808,11 +834,9 @@ def main_incoming_sort(
             resp_queue_put(key)
             continue
 
-        cldata_unpacket_udp(msg[0])
 
         # TODO: handle admin key and flags on cldata
 
-        remote_status = cldata.status
         if remote_status == STATUS_PORT_OPEN:
             # client is pinging server ports to keep nat table listings
             continue
@@ -897,7 +921,7 @@ def main(_verbose, _subprocess_ct, port_start):
     udp_bufsize = 1500
     tcp_port = 17777
     tcp_bufsize = 1500
-    local_ip = '192.168.0.203'
+    local_ip = '192.168.5.54'
     udp_sockets = [
         socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) for _ in range(socket_ct)
     ]
@@ -1186,7 +1210,7 @@ VA_PORT     = 1
 VA_VERBOSE  = 2
 VA_SUBPROC  = 3
 
-VERBOSE_UPDATE_TIME = 30
+VERBOSE_UPDATE_TIME = 10
 
 valid_argnames = (("-h", "--help"), ("-p", "--port"), ("-v", "--verbose"), ('-s', '--subproc'))
 valid_argnames_info = (

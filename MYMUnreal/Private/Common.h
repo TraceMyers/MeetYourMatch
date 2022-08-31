@@ -91,6 +91,7 @@ namespace MYM {
 	static constexpr uint8 SUFFIX = 3;
 
 	static constexpr double LATCHECK_TIME = 8.0;
+	static constexpr double LATCHECK_ROUND_TIME = 1.0;
 	
 	struct CommData {
 		FString name;
