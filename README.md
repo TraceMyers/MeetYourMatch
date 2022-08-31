@@ -1,6 +1,6 @@
 # MYM: Meet Your Match
 
-<p>A (currently in the works) simple, fast, multi-session P2P connection server with direct support for python, Unreal and GameMaker clients. Provides pre-grouped or automatic matchmaking and session handling. Because clients connect directly to each other, computational and network load are removed from the server, allowing for many more clients per dollar spent on remote hosting.</p>
+<p>A (currently in the works) multi-session P2P connection server with direct support for python, Unreal and GameMaker clients. Provides pre-grouped or automatic matchmaking and session handling. Because clients connect directly to each other, computational and network load are removed from the server, allowing for many more clients per dollar spent on remote hosting.</p>
 
 <h2>Overview</h2>
 <h3>Setup</h3>
