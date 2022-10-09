@@ -1,6 +1,7 @@
-# --------------------------------------------------------------------------------------------------
-# ----------------------------------------------------------------------------------------:constants
-# --------------------------------------------------------------------------------------------------
+DEFAULT_IP = "192.168.1.1"
+MAX_MATCHMAKING_SESSIONS = 1000
+MAX_RUNNING_SESSIONS = 10000
+ACCEPT_TRAFFIC_PORTS = [port for port in range(7777, 8000)]
 
 # -------------------------------------------------------------------------------------------:status
 
@@ -21,7 +22,13 @@ STATUS_IN_GROUP             = 0x0040
 STATUS_JOIN_SESSION         = 0x0050
 STATUS_PING                 = 0x0060
 STATUS_PINGBACK             = 0x0070
-STATUS_PORT_OPEN            = 0x0080
+
+CL_STATUS_NONE					= 0x0000
+CL_STATUS_REGISTER				= 0x0001
+CL_STATUS_REGISTER_HOST			= 0x0003
+
+CL_STATUS_MATCHING				= 0x0010
+CL_STATUS_MATCHING_HOST			= 0x0030
 
 ERROR_MASK                  = 0xff00
 ERROR_DATA_FORMAT           = 0x0100
@@ -42,6 +49,19 @@ ERROR_SESSIONS_MAXED        = 0x0f00
 ERROR_ALREADY_REGISTERED    = 0x1000
 ERROR_BAD_GROUP_SIZE		= 0x2000
 ERROR_GROUPING_TIMEOUT      = 0x3000
+
+SV_ERROR					= 0xff00
+SV_ERROR_IP_BANNED          = 0x0100
+SV_ERROR_NOT_REGISTERING	= 0x0200
+SV_ERROR_FAST_POLL_RATE     = 0x0300
+SV_ERROR_IP_LOG_MAXED       = 0x0400
+SV_ERROR_BAD_GROUP_SIZE		= 0x0500
+SV_ERROR_BAD_REGISTER_CODE	= 0x0600
+SV_ERROR_ALREADY_MATCHING	= 0x0700
+SV_ERROR_MM_SESSIONS_MAXED	= 0x0800
+
+SV_STATUS					= 0x00ff
+SV_STATUS_REGISTER_OK		= 0x0001
 
 COM_STUN = 0
 COM_TURN = 1
@@ -73,9 +93,7 @@ CL_RESTORE_DEFAULTS     = 0x8000 | CL_ADMIN # turn off anything changed by flags
 
 # ----------------------------------------------------------------------------------:other constants
 
-SES_MAX = 600 # max number of sessions
 MAX_CLIENT_CT = 5
-SES_CLIENT_MAX = SES_MAX * 2 # max number clients in all sessions
 GAP = b'\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0'
 STUN_LOW_LAT = 0.07
 STUN_MID_LAT = 0.13
@@ -83,14 +101,15 @@ STUN_OOF_LAT = 0.20
 TURN_LOW_LAT = 0.10
 TURN_MID_LAT = 0.18
 TURN_OOF_LAT = 0.30
-ACCEPT_TRAFFIC_PORTS = (
-	7777, 7778, 7779, 7780, 7781, 7782, 7783, 7784, 7785, 7786, 7787, 7788, 7789, 7780, 7781,
-	7782, 7783, 7784, 7785, 7786, 7787, 7789, 7790, 7791, 7792, 7793, 7794, 7795, 7796, 7797,
-	7798, 7799
-)
+REGISTRATION_PORT = 7778
+MATCHMAKING_PORT = 7779
+SESSION_PORT = 7780
 LAT_TURNOVER = 8
 CONNECT_TURNOVER = LAT_TURNOVER * 4
 CONNECT_TURNOVER_HOST = CONNECT_TURNOVER * 20
+IP_TURNOVER_TIME = 15
+IP_TURNOVER_UPDATE = 5
+MAX_POLL_RATE = 0.1
 
 LAT_LOW = 0
 LAT_MID = 1
