@@ -5,11 +5,12 @@ from time import time
 
 class ConnectionLog:
 
-    def __init__(self, max_poll_rate, turnover_time):
+    def __init__(self, max_poll_rate, turnover_time, max_ips):
         self.ip_log = {}
         self.turnover_time = turnover_time
         self.max_poll_rate = max_poll_rate
         self.ban_list = []
+        self.max_ips = max_ips
 
     def get_client(self, ip_address):
         if ip_address in self.ip_to_client:
@@ -32,7 +33,7 @@ class ConnectionLog:
                 return SV_ERROR_FAST_POLL_RATE
             else:
                 self.ip_log[ip_address][1] = 0
-        elif len(self.ip_log.keys()) >= SES_MAX:
+        elif len(self.ip_log.keys()) >= self.max_ips:
             return SV_ERROR_IP_LOG_MAXED
         else:
             self.ip_log[ip_address] = [0, 0]
@@ -70,13 +71,13 @@ class PacketData:
         self.admin_key = None                   # 16
         self.client_data = b''                  # 460 (udp) -> 508 total
 
-    def unpacket_udp(self, data):
+    def unpackit(self, data):
         self.status, self.flags, self.time_stamp, self.name, \
             self.admin_key, self.client_data = unpack('<2Id16s16s460s', data)
         self.name = self.name.decode()
         self.admin_key = self.admin_key.decode()
     
-    def pack_udp(self):
+    def packit(self):
         return pack(
             f'<2Id16s16s460s',
             self.status, self.flags, self.time_stamp, 
@@ -92,12 +93,12 @@ class Client:
     __slots__ = (
         'name', 'status', 'address', 'match_size', 'host_latencies', 'local_address'
     )
-    def __init__(self, name, address, status, match_size=0, local_address=(None, None)):
-        self.name = name
-        self.status = status
+    def __init__(self, pdata, address):
+        self.name = pdata.name
+        self.status = pdata.status
         self.address = address
-        self.match_size = match_size
-        self.local_address = local_address
+        self.match_size = 0
+        self.set_local_ip(pdata)
 
     def __repr__(self):
         return self.__str__()
@@ -105,9 +106,9 @@ class Client:
     def __str__(self):
         return f'{self.address[0]}:{self.address[1]} | {self.name} | {self.status:04X}'
 
-    def set_client_ct(self, pdata):
+    def set_match_size(self, pdata):
         self.client_ct = pdata.client_data[0]
-        return 1 <= self.client_ct <= MAX_CLIENT_CT
+        return 1 <= self.client_ct <= MAX_MATCH_SIZE
 
     def set_local_ip(self, pdata):
         try:
@@ -162,7 +163,6 @@ class MatchingHost(Client):
             client.client_ct, 
             client.local_address
         )
-        self.session = None
 
 
 class MatchingData:
@@ -170,32 +170,52 @@ class MatchingData:
     __slots__ = ('addresses', 'hosts', 'unmatched_clients', 'matched_clients', 'sessions')
     def __init__(self):
         self.addresses = []
-        self.hosts = []
-        self.unmatched_clients = []
-        self.matched_clients = []
         self.sessions = []
+        self.unmatched_clients = []
 
     def __repr__(self):
         return self.__str__()
 
     def __str__(self):
-        clients = '\n'.join([str(client) for client in self.clients])
+        clients = '\n'.join([str(client) for client in self.unmatched_clients])
         sessions = '\n'.join([str(session) for session in self.sessions])
         return(
             '--------------------------\nGrouping Data:\n--------------------------\n'
             f'= Clients =\n\n{clients}\n\n= Sessions =\n\n{sessions}'
         )
 
+    def is_matching(self, address):
+        return address in self.addresses
+
+    def find_unmatched(self, client):
+        for i in range(len(self.unmatched_clients)):
+            uclient = self.unmatched_clients[i]
+            if uclient.address == client.address:
+                return i
+        return -1
+
+    def find_matched(self, client):
+        for i in range(len(self.sessions)):
+            s = self.sessions[i]
+            if client.address in s.addresses:
+                return i
+        return -1
+
+    def find_host(self, host):
+        for i in range(len(self.sessions)):
+            s = self.sessions[i]
+            if host.address == s.host.address:
+                return i
+        return -1
+
 
 class Session:
 
-    def __init__(self, host, client_max=1):
+    def __init__(self, host):
         self.host = host
-        self.known_name = None if host.status != STATUS_REG_HOST_KNOWNHOST else host.name
         self.clients = []
-        self.client_max = client_max
-        self.com = COM_STUN
-        self.addresses = set([host.address]) # used after grouping
+        self.client_max = host.match_size - 1
+        self.addresses = set([host.address])
         self.locked = False
         self.timeout_ctr = 0
 
@@ -221,7 +241,7 @@ class SessionData:
 
 def buffer_incoming(sock, bufsiz, incoming, name):
     """
-    buffer incoming registrations
+    buffer incoming packets
     """
     while True:
         try:

@@ -14,7 +14,7 @@ from sessions import *
 
 def main_proc(r_sock, m_sock, s_sock, bufsiz, verbose):
     incoming = deque()
-    reg_connect_log = ConnectionLog()
+    reg_connect_log = ConnectionLog(MAX_POLL_RATE, IP_TURNOVER_TIME, MAX_REGISTERING)
     rm_pipe_out, rm_pipe_in = Pipe(False) # False = simplex
     ms_pipe_out, ms_pipe_in = Pipe(False)
     multi_manager = Manager()
