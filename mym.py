@@ -1,22 +1,17 @@
 from multiprocessing import Process, Pipe, active_children, Manager
-from threading import Thread, Lock
+from threading import Thread
 from sys import argv
-from time import time, sleep
 import socket
-from collections import deque
 import traceback
-
-from constants import *
 from register import *
 from match import *
-from sessions import *
 
 
-def main_proc(r_sock, m_sock, s_sock, bufsiz, verbose):
+def main_proc(r_sock, m_sock, s_sock, bufsiz, _verbose):
     incoming = deque()
     reg_connect_log = ConnectionLog(MAX_POLL_RATE, IP_TURNOVER_TIME, MAX_REGISTERING)
-    rm_pipe_out, rm_pipe_in = Pipe(False) # False = simplex
-    ms_pipe_out, ms_pipe_in = Pipe(False)
+    rm_pipe_in, rm_pipe_out = Pipe(False) # False = simplex
+    ms_pipe_in, ms_pipe_out = Pipe(False)
     multi_manager = Manager()
     drop_queue = multi_manager.Queue()
     drop_key = multi_manager.Queue()
@@ -41,27 +36,27 @@ def main_proc(r_sock, m_sock, s_sock, bufsiz, verbose):
         ms_pipe_out,
         drop_queue,
         drop_key,
-        verbose
+        _verbose
     ]
-    s_args = [
-        s_sock,
-        bufsiz,
-        ms_pipe_in,
-        drop_queue,
-        drop_key,
-        verbose
-    ]
+    # s_args = [
+    #     s_sock,
+    #     bufsiz,
+    #     ms_pipe_in,
+    #     drop_queue,
+    #     drop_key,
+    #     verbose
+    # ]
 
     # each process responds on its own socket
     reg_inc = Thread(target=buffer_incoming, args=reg_inc_args)
     reg_t = Thread(target=register_clients, args=reg_args)
     m_proc = Process(target=match_clients, args=m_args)
-    s_proc = Process(target=manage_sessions, args=s_args)
+    # s_proc = Process(target=manage_sessions, args=s_args)
 
     reg_inc.start()
     reg_t.start()
     m_proc.start()
-    s_proc.start()
+    # s_proc.start()
 
     print('running...')
     while True:
@@ -70,19 +65,16 @@ def main_proc(r_sock, m_sock, s_sock, bufsiz, verbose):
 
 def main(_verbose, _ip):
     udp_bufsize = 576
-    local_ip = _ip
     register_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    register_socket.bind((local_ip, REGISTRATION_PORT))
+    register_socket.bind((_ip, REGISTRATION_PORT))
     matchmaking_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    matchmaking_socket.bind((local_ip, MATCHMAKING_PORT))
+    matchmaking_socket.bind((_ip, MATCHMAKING_PORT))
     session_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    session_socket.bind((local_ip, SESSION_PORT))
+    session_socket.bind((_ip, SESSION_PORT))
 
     while True:
         try:
-            print(
-                f'Meet Your Match server loading at {local_ip}\n'
-            )
+            print(f'Meet Your Match server at {_ip}')
             print(f'accepting registration on port {REGISTRATION_PORT}')
             print(f'accepting matchmaking on port {MATCHMAKING_PORT}')
             print(f'accepting sessions on port {SESSION_PORT}')
@@ -106,7 +98,7 @@ VA_VERBOSE  = 2
 
 VERBOSE_UPDATE_TIME = 10
 
-valid_argnames = (("-h", "--help"), ("-i", "--ip") ("-v", "--verbose"))
+valid_argnames = (("-h", "--help"), ("-i", "--ip"), ("-v", "--verbose"))
 valid_argnames_info = (
     "see names and explanations of arguments",
     "specifies the server's public ip address (default can be set in constants.py)",
@@ -158,7 +150,8 @@ if __name__ == '__main__':
                     ip_list = [int(val) for val in ip.split('.')]
                     assert len(ip_list) == 4
                     for j in range(4):
-                        assert ip_list[j] >= 0 and ip_list[j] <= 255
+                        assert 0 <= ip_list[j] <= 255
+                    local_ip = ip
                 except:
                     print(ERRNAME_IP_MALFORMED)
                     exit(1)

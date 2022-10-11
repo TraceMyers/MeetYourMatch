@@ -1,6 +1,7 @@
 from constants import *
 from struct import pack, unpack
 from time import time
+from threading import Lock
 
 
 class ConnectionLog:
@@ -64,7 +65,7 @@ class PacketData:
         'status', 'flags', 'time_stamp', 'name', 'admin_key', 'client_data'
     )
     def __init__(self):
-        self.status = STATUS_NONE               # 4
+        self.status = CL_STATUS_NONE            # 4
         self.flags = 0                          # 4
         self.time_stamp = 0                     # 8
         self.name = 'JoeSevere\0\0\0\0\0\0\0'   # 16
@@ -148,8 +149,8 @@ class MatchingClient(Client):
         self.host_latencies = {}
         self.lat_status = LAT_LOW
         self.lat_ctr = 0
-        self.connect_ctr = 0
-        self.session = None
+        self.alive_ctr = MATCHMAKING_ALIVE_TIME
+        self.in_match = False
 
 
 class MatchingHost(Client):
@@ -163,50 +164,149 @@ class MatchingHost(Client):
             client.client_ct, 
             client.local_address
         )
+        self.alive_ctr = MATCHMAKING_ALIVE_TIME
+        self.in_match = False
 
 
-class MatchingData:
+# only auto-locking in str because it was found to be a potentially thread-unsafe thing to 
+# rely on auto-locking for most things, since calls made in sequence can be divided by a 
+# lock.acquire happening on another thread
+class LockedMatchingData:
 
-    __slots__ = ('addresses', 'hosts', 'unmatched_clients', 'matched_clients', 'sessions')
-    def __init__(self):
-        self.addresses = []
+    def __init__(self, max_user_ct):
+        self.address_to_record = {}
         self.sessions = []
         self.unmatched_clients = []
+        self.lock = Lock()
+        self.max_user_ct = max_user_ct
 
     def __repr__(self):
         return self.__str__()
 
     def __str__(self):
+        self.lock.acquire()
         clients = '\n'.join([str(client) for client in self.unmatched_clients])
         sessions = '\n'.join([str(session) for session in self.sessions])
+        self.lock.release()
         return(
             '--------------------------\nGrouping Data:\n--------------------------\n'
             f'= Clients =\n\n{clients}\n\n= Sessions =\n\n{sessions}'
         )
 
-    def is_matching(self, address):
-        return address in self.addresses
+    def add_unmatched_locked(self, client):
+        if len(self.addresses_to_record.keys()) < self.max_user_ct:
+            matching_client = MatchingClient(client)
+            self.unmatched_clients.append(matching_client)
+            self.address_to_record[matching_client.address] = matching_client
+            return True
+        return False
+    
+    def add_host_locked(self, client):
+        if len(self.addresses_to_record.keys()) < self.max_user_ct:
+            matching_host = MatchingHost(client)
+            self.sessions.append(Session(matching_host))
+            self.address_to_record[matching_host.address] = matching_host
+            return True
+        return False
 
-    def find_unmatched(self, client):
+    def record_exists_locked(self, address):
+        return address in self.address_to_record.keys()
+
+    def find_client_unmatched(self, address):
         for i in range(len(self.unmatched_clients)):
             uclient = self.unmatched_clients[i]
-            if uclient.address == client.address:
+            if uclient.address == address:
                 return i
         return -1
 
-    def find_matched(self, client):
+    def find_client_matched(self, address):
         for i in range(len(self.sessions)):
             s = self.sessions[i]
-            if client.address in s.addresses:
+            for j in range(len(s.clients)):
+                c = s.clients[j]
+                if c.address == address:
+                    return i, j
+        return -1, -1
+
+    def find_host(self, address):
+        for i in range(len(self.sessions)):
+            s = self.sessions[i]
+            if address == s.host.address:
                 return i
         return -1
 
-    def find_host(self, host):
+    def drop(self, address):
+        if address in self.address_to_record.keys():
+            del self.address_to_record[address]
+        for i in range(len(self.unmatched_clients)):
+            uclient_address = self.unmatched_clients[i].address
+            if uclient_address == address:
+                self.unmatched_clients.pop(i)
+                break
+        found_client = False
         for i in range(len(self.sessions)):
-            s = self.sessions[i]
-            if host.address == s.host.address:
-                return i
-        return -1
+            session = self.sessions[i]
+            if address == session.host.address:
+                for client in session.clients:
+                    if len(self.unmatched_clients) < self.max_user_ct:
+                        self.unmatched_clients.append(client)
+                    else:
+                        break
+                self.sessions.pop(i)
+                break
+            else:
+                for j in range(len(session.clients)):
+                    client_address = session.clients[j].address
+                    if client_address == address:
+                        found_client = True
+                        session.clients.pop(j)
+                        session.addresses.remove(address)
+                        break
+                if found_client:
+                    break
+
+    def reset_alive_ctr_unmatched_client(self, index):
+        self.unmatched_clients[index].alive_ctr = MATCHMAKING_ALIVE_TIME
+
+    def reset_alive_ctr_matched_client(self, session_i, client_i):
+        self.sessions[session_i].clients[client_i].alive_ctr = MATCHMAKING_ALIVE_TIME
+
+    def reset_alive_ctr_host(self, session_i):
+        self.sessions[session_i].host.alive_ctr = MATCHMAKING_ALIVE_TIME
+
+    def set_client_in_match(self, session_i, client_i):
+        self.sessions[session_i].clients[client_i].in_match = True
+
+    def set_host_in_match(self, session_i):
+        self.sessions[session_i].host.in_match = True
+
+    def acquire_lock(self):
+        self.lock.acquire()
+
+    def release_lock(self):
+        self.lock.release()
+
+    def pack_session(self, index, pdata):
+        session = self.sessions[index]
+        session_data = [(session.host.name, session.host.address), ]
+        for client in session.clients:
+            session_data.append((client.name, client.address))
+
+        max_len = MAX_GROUP_PACK - 1
+        ctr = 0
+        byte_strings = []
+        for item in session_data:
+            if ctr >= max_len:
+                print("ERROR: LockedMatchingData::pack_session overflow")
+                break
+            name = item[0]
+            ip_address, port = item[1][0], item[1][1]
+            ip_bytes = bytes([int(addr_item) for addr_item in ip_address.split('.')]) \
+                        + int.to_bytes(port, 2, 'little')
+            byte_strings.append(pack('16s6s', name.encode(), ip_bytes))
+            ctr += 1
+        byte_str = b''.join(byte_strings)
+        pdata.client_data = byte_str + b'000009'
 
 
 class Session:
@@ -217,7 +317,6 @@ class Session:
         self.client_max = host.match_size - 1
         self.addresses = set([host.address])
         self.locked = False
-        self.timeout_ctr = 0
 
     def __repr__(self):
         return self.__str__()
@@ -232,11 +331,69 @@ class Session:
             f'= Clients =\n{clients}\n'
         )
 
+    def str_line_count(self):
+        return 6 + len(self.clients) - 1
+
 
 class SessionData:
 
     def __init__(self):
         self.sessions = []
+
+
+"""
+Usage of this in a thread-safe way requires thought; it doesn't just make usage safe automatically.
+"""
+class LockedList:
+
+    def __init__(self, *args):
+        self.list = list(*args)
+        self.lock = Lock()
+
+    """
+    only for use after calling acquire_lock()
+    """
+    def __getitem__(self, index):
+        return self.list[index]
+
+    def __contains__(self, item):
+        self.lock.acquire()
+        contains_item = item in self.list
+        self.lock.release()
+        return contains_item
+
+    def get(self, index):
+        self.lock.acquire()
+        item = self.list[index]
+        self.lock.release()
+        return item
+
+    def find(self, item):
+        self.lock.acquire()
+        index = self.list.index(item)
+        self.lock.release()
+        return index
+
+    def append(self, item):
+        self.lock.acquire()
+        self.list.append(item)
+        self.lock.release()
+
+    def remove(self, item):
+        self.lock.acquire()
+        self.list.remove(item)
+        self.lock.release()
+
+    def clear(self):
+        self.lock.aqcuire()
+        self.list.clear()
+        self.lock.release()
+
+    def acquire_lock(self):
+        self.lock.acquire()
+
+    def release_lock(self):
+        self.lock.release()
 
 
 def buffer_incoming(sock, bufsiz, incoming, name):
@@ -254,4 +411,3 @@ def buffer_incoming(sock, bufsiz, incoming, name):
             print(f'ERROR {name}::buffer_incoming() passed exception from sock.recvfrom():')
             print(e)
             continue
-
